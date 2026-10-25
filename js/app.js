@@ -56,12 +56,50 @@
   })();
 
   // ---------- 3D cube ----------
-  function roundedRect(w, r) {
+  function roundedShape(w, r) {
     const s = new THREE.Shape(), h = w / 2;
     s.moveTo(-h + r, -h); s.lineTo(h - r, -h); s.quadraticCurveTo(h, -h, h, -h + r);
     s.lineTo(h, h - r); s.quadraticCurveTo(h, h, h - r, h); s.lineTo(-h + r, h);
     s.quadraticCurveTo(-h, h, -h, h - r); s.lineTo(-h, -h + r); s.quadraticCurveTo(-h, -h, -h + r, -h);
-    return new THREE.ShapeGeometry(s, 6);
+    return s;
+  }
+  // Rounded square with its own radius per corner: [top-left, top-right, bottom-right, bottom-left].
+  function cornerShape(w, rr, path) {
+    const s = path || new THREE.Shape(), h = w / 2, [tl, tr, br, bl] = rr;
+    s.moveTo(-h + bl, -h); s.lineTo(h - br, -h); s.quadraticCurveTo(h, -h, h, -h + br);
+    s.lineTo(h, h - tr); s.quadraticCurveTo(h, h, h - tr, h); s.lineTo(-h + tl, h);
+    s.quadraticCurveTo(-h, h, -h, h - tl); s.lineTo(-h, -h + bl); s.quadraticCurveTo(-h, -h, -h + bl, -h);
+    return s;
+  }
+  // Tile outline for each sticker in the style of a stickerless speed cube: centers are round
+  // caps, edges are rounded on the side facing the center, corners soften the corner nearest
+  // the center. `toCenter` is the local direction from the tile toward its face's center.
+  const TILE = 0.92;
+  function tileRadii(kind, toCenter) {
+    const sx = Math.sign(Math.round(toCenter.x)), sy = Math.sign(Math.round(toCenter.y));
+    const small = 0.07;
+    if (kind === 1) return [0.3, 0.3, 0.3, 0.3];
+    const big = kind === 2 ? 0.4 : 0.26;
+    const corners = [[-1, 1], [1, 1], [1, -1], [-1, -1]];
+    return corners.map(([cx, cy]) => {
+      if (kind === 3) return cx === sx && cy === sy ? big : small;
+      return (sx && cx === sx) || (sy && cy === sy) ? big : small;
+    });
+  }
+
+  // A flat arrow pointing along +y, centered on the origin; `double` adds a second head ("twice").
+  function arrowGeometry(len, w, hl, hw, double) {
+    const y0 = -len / 2, y1 = len / 2;
+    const s = new THREE.Shape();
+    s.moveTo(-w / 2, y0); s.lineTo(w / 2, y0); s.lineTo(w / 2, y1 - hl); s.lineTo(hw / 2, y1 - hl);
+    s.lineTo(0, y1); s.lineTo(-hw / 2, y1 - hl); s.lineTo(-w / 2, y1 - hl); s.closePath();
+    const shapes = [s];
+    if (double) {
+      const t = new THREE.Shape(), off = hl * 0.95;
+      t.moveTo(hw / 2, y1 - hl - off); t.lineTo(0, y1 - off); t.lineTo(-hw / 2, y1 - hl - off); t.closePath();
+      shapes.push(t);
+    }
+    return new THREE.ShapeGeometry(shapes);
   }
   const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
@@ -73,19 +111,32 @@
       host.prepend(r.domElement);
       this.scene = new THREE.Scene();
       this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-      this.scene.add(new THREE.AmbientLight(0xffffff, 0.74));
-      const d1 = new THREE.DirectionalLight(0xffffff, 0.38); d1.position.set(3, 7, 5); this.scene.add(d1);
-      const d2 = new THREE.DirectionalLight(0xffffff, 0.14); d2.position.set(-5, -3, -2); this.scene.add(d2);
+      // soft studio light: sky/ground fill, a key light from the upper front-right, a faint rim
+      this.scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa1b0, 0.62));
+      const key = new THREE.DirectionalLight(0xffffff, 0.58); key.position.set(3, 10, 6); this.scene.add(key);
+      const fill = new THREE.DirectionalLight(0xffffff, 0.16); fill.position.set(-6, 2, 4); this.scene.add(fill);
       this.root = new THREE.Group(); this.scene.add(this.root);
       this.HOME = { theta: 0.62, phi: 0.98 };
       this.view = { theta: this.HOME.theta, phi: this.HOME.phi };
       this.pad = 0; this.dist = 12;
       this.cubies = []; this.stickers = [];
-      this.anims = []; this.dirty = true; this.arrow = null;
+      this.anims = []; this.dirty = true; this.arrow = null; this.slotMark = null;
       this.buildShadow();
-      const bodyMat = new THREE.MeshStandardMaterial({ color: 0x17191f, roughness: 0.55, metalness: 0.05 });
-      const bodyGeo = new THREE.BoxGeometry(0.97, 0.97, 0.97);
-      const stGeo = roundedRect(0.86, 0.13);
+      // light inner plastic, as on a stickerless cube; the tiles nearly cover it
+      const bodyMat = new THREE.MeshStandardMaterial({ color: 0xd9d3c6, roughness: 0.85, metalness: 0 });
+      const bodyGeo = new THREE.BoxGeometry(0.985, 0.985, 0.985);
+      const geoCache = {}, ringCache = {};
+      const extrude = { depth: 0.02, bevelEnabled: true, bevelThickness: 0.014, bevelSize: 0.012, bevelSegments: 2, curveSegments: 8 };
+      const tileGeoFor = rr => geoCache[rr] || (geoCache[rr] = new THREE.ExtrudeGeometry(cornerShape(TILE - 0.024, rr), extrude));
+      // a dark frame laid on a tile, used to mark the pair's stickers
+      const ringGeoFor = rr => {
+        if (ringCache[rr]) return ringCache[rr];
+        const outer = cornerShape(TILE - 0.02, rr);
+        const hole = cornerShape(TILE - 0.2, rr.map(r => Math.max(0.03, r - 0.08)), new THREE.Path());
+        outer.holes.push(hole);
+        return (ringCache[rr] = new THREE.ShapeGeometry(outer, 8));
+      };
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x121318 });
       for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
         if (!x && !y && !z) continue;
         const g = new THREE.Group();
@@ -94,11 +145,18 @@
         g.add(new THREE.Mesh(bodyGeo, bodyMat));
         Cube.STICKERS.forEach(s => {
           if (s.pos[0] !== x || s.pos[1] !== y || s.pos[2] !== z) return;
-          const m = new THREE.Mesh(stGeo, new THREE.MeshLambertMaterial({ color: 0xcccccc }));
           const n = new THREE.Vector3(...s.n);
-          m.position.copy(n.clone().multiplyScalar(0.487));
-          m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+          const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+          // which way the face's center lies, in the tile's own flat coordinates
+          const toCenter = n.clone().sub(new THREE.Vector3(x, y, z)).applyQuaternion(q.clone().invert());
+          const rr = tileRadii(Cube.STICKER_CUBIE[s.i].stickers.length, toCenter);
+          const m = new THREE.Mesh(tileGeoFor(rr), new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.34, metalness: 0 }));
+          m.position.copy(n.clone().multiplyScalar(0.49));
+          m.quaternion.copy(q);
           m.userData.idx = s.i;
+          const ring = new THREE.Mesh(ringGeoFor(rr), ringMat);
+          ring.position.z = 0.036; ring.visible = false;
+          m.add(ring); m.userData.ring = ring;
           g.add(m); this.stickers[s.i] = m;
         });
         this.root.add(g);
@@ -114,11 +172,11 @@
     buildShadow() {
       const cv = document.createElement('canvas'); cv.width = cv.height = 128;
       const x = cv.getContext('2d');
-      const g = x.createRadialGradient(64, 64, 4, 64, 64, 62);
-      g.addColorStop(0, 'rgba(17,19,24,0.22)'); g.addColorStop(1, 'rgba(17,19,24,0)');
+      const g = x.createRadialGradient(64, 64, 2, 64, 64, 62);
+      g.addColorStop(0, 'rgba(18,19,24,0.26)'); g.addColorStop(0.55, 'rgba(18,19,24,0.08)'); g.addColorStop(1, 'rgba(18,19,24,0)');
       x.fillStyle = g; x.fillRect(0, 0, 128, 128);
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 5.2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false }));
-      m.rotation.x = -Math.PI / 2; m.position.y = -2.3;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 5.6), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false }));
+      m.rotation.x = -Math.PI / 2; m.position.y = -2.25;
       this.scene.add(m);
     }
     setPad(px) { this.pad = px; this.resize(); }
@@ -127,11 +185,11 @@
       if (!w || !h) return;
       this.renderer.setSize(w, h, false);
       this.camera.aspect = w / h;
-      const top = 44, pad = Math.min(this.pad, h * 0.6);
+      const top = 48, pad = Math.min(this.pad, h * 0.6);
       const tanV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-      const R = 2.6;
-      const fitV = tanV * (h - pad - top) / h, fitH = tanV * (w - 16) / h;
-      this.dist = R / Math.min(fitV, fitH) + 0.4;
+      const R = 2.55;
+      const fitV = tanV * (h - pad - top) / h, fitH = tanV * (w - 20) / h;
+      this.dist = R / Math.min(fitV, fitH) + 0.3;
       this.camera.setViewOffset(w, h, 0, (pad - top) / 2, w, h);
       this.camera.updateProjectionMatrix();
       this.dirty = true;
@@ -159,19 +217,36 @@
         this.anims.push({ ms, step, done });
       });
     }
-    // Paint stickers from a 54-color state; `focus` is a set of sorted color keys to keep bright.
+    // Paint tiles from a 54-color state; `focus` (sorted color keys) keeps those pieces in full
+    // color and turns the rest a quiet gray. Centers stay faintly tinted so faces stay readable.
     setState(state, focus) {
-      const dimTo = new THREE.Color('#eceef2');
+      const quiet = new THREE.Color('#c3c8d0');
       for (const c of this.cubies) {
         const meshes = c.obj.children.filter(m => m.userData.idx != null);
         const key = meshes.map(m => state[m.userData.idx]).sort().join('');
         const isCenter = meshes.length === 1;
         const dim = focus && !focus.has(key);
+        const marked = !!focus && !dim && !isCenter;
         for (const m of meshes) {
           const col = new THREE.Color(HEX[state[m.userData.idx]]);
-          if (dim) col.lerp(dimTo, isCenter ? 0.5 : 0.86);
+          if (dim) col.lerp(quiet, isCenter ? 0.5 : 0.94);
           m.material.color.copy(col);
+          m.userData.ring.visible = marked;
         }
+      }
+      this.dirty = true;
+    }
+    // Outline the slot a pair goes into ('FR', 'FL', 'BR', 'BL' in the current view), or none.
+    setSlot(slot) {
+      if (this.slotMark) { this.scene.remove(this.slotMark); this.slotMark = null; }
+      if (slot) {
+        const box = new THREE.BoxGeometry(1.14, 2.14, 1.14);
+        const g = new THREE.Group();
+        g.add(new THREE.Mesh(box, new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.13, depthWrite: false })));
+        g.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.85 })));
+        g.position.set(slot[1] === 'R' ? 1 : -1, -0.5, slot[0] === 'F' ? 1 : -1);
+        this.scene.add(g);
+        this.slotMark = g;
       }
       this.dirty = true;
     }
@@ -200,37 +275,67 @@
       this.view = { theta: end.theta - Math.PI * 1.25, phi: 0.7 };
       return this.animate(1300, e => { this.view.theta = end.theta - Math.PI * 1.25 * (1 - e); this.view.phi = 0.7 + (end.phi - 0.7) * e; });
     }
-    faceVisible(face) {
-      const n = new THREE.Vector3(...Cube.NORMALS[face]);
-      return n.dot(this.camera.position.clone().normalize()) > 0.25;
-    }
+    // Arrows the way cube tutorials draw them: a straight arrow along the column or row that
+    // turns (drawn on the front, or on the top for the back layer), a curved one for the front
+    // face, and a ring around the cube for whole-cube turns.
     showArrow(move) {
       this.clearArrow();
       if (!move) return;
-      const mv = Cube.MOVES[move];
-      const isRot = 'xyz'.includes(mv.base);
-      const radius = isRot ? 2.3 : 0.92, tube = isRot ? 0.06 : 0.06;
-      const arc = mv.amount === 2 ? Math.PI * 1.7 : Math.PI * 1.35;
-      const mat = new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.95 });
-      const outer = new THREE.Group(), inner = new THREE.Group();
-      inner.add(new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 10, 64, arc), mat));
-      const cw = mv.amount !== -1;
-      const heads = mv.amount === 2 ? [0, arc / 2] : [cw ? 0 : arc];
-      if (!cw && mv.amount === 2) heads.length = 0;
-      heads.forEach(a => {
-        const cone = new THREE.Mesh(new THREE.ConeGeometry(isRot ? 0.2 : 0.17, isRot ? 0.44 : 0.38, 20), mat);
-        const dir = cw ? new THREE.Vector3(Math.sin(a), -Math.cos(a), 0) : new THREE.Vector3(-Math.sin(a), Math.cos(a), 0);
-        cone.position.set(radius * Math.cos(a), radius * Math.sin(a), 0).add(dir.clone().multiplyScalar(0.12));
-        cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-        inner.add(cone);
-      });
-      inner.rotation.z = Math.PI * 0.32;
-      outer.add(inner);
-      const ax = new THREE.Vector3(...mv.axis);
-      outer.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), ax);
-      if (!isRot) outer.position.copy(ax.clone().multiplyScalar(1.6));
-      this.scene.add(outer);
-      this.arrow = outer;
+      const mv = Cube.MOVES[move], f = mv.base, a = mv.amount;
+      const fill = new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.97 });
+      const edge = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 });
+      const g = new THREE.Group();
+      const flat = (len) => {
+        const inner = new THREE.Group();
+        const o = new THREE.Mesh(arrowGeometry(len + 0.14, 0.3, 0.52, 0.72, a === 2), edge);
+        const i = new THREE.Mesh(arrowGeometry(len, 0.17, 0.42, 0.56, a === 2), fill);
+        o.position.set(0, 0, -0.004); i.position.y = -0.02;
+        inner.add(o, i);
+        return inner;
+      };
+      if ('RLUD'.includes(f)) {
+        // direction the front stickers of that layer travel
+        const dirs = { R: [0, 1], L: [0, -1], U: [-1, 0], D: [1, 0] };
+        let [dx, dy] = dirs[f];
+        if (a === -1) { dx = -dx; dy = -dy; }
+        const arrow = flat(2.15);
+        arrow.rotation.z = Math.atan2(-dx, dy);
+        arrow.position.set(f === 'R' ? 1 : f === 'L' ? -1 : 0, f === 'U' ? 1 : f === 'D' ? -1 : 0, 1.58);
+        g.add(arrow);
+      } else if (f === 'B') {
+        // back layer: its top row slides left (B) or right (B') as seen from the front
+        const arrow = flat(2.15);
+        arrow.rotation.z = Math.atan2(a === -1 ? -1 : 1, 0);
+        const holder = new THREE.Group();
+        holder.rotation.x = -Math.PI / 2;
+        holder.position.set(0, 1.58, -1);
+        holder.add(arrow);
+        g.add(holder);
+      } else {
+        // curved: front face, or a ring around the cube for whole-cube turns
+        const isRot = 'xyz'.includes(f);
+        const radius = isRot ? 2.3 : 0.98, tube = isRot ? 0.075 : 0.085;
+        const arc = a === 2 ? Math.PI * 1.7 : Math.PI * 1.3;
+        const outer = new THREE.Group(), inner = new THREE.Group();
+        inner.add(new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 12, 72, arc), fill));
+        const cw = a !== -1;
+        const heads = a === 2 ? [0, arc / 2] : [cw ? 0 : arc];
+        heads.forEach(t => {
+          const cone = new THREE.Mesh(new THREE.ConeGeometry(isRot ? 0.22 : 0.2, isRot ? 0.48 : 0.42, 24), fill);
+          const dir = cw ? new THREE.Vector3(Math.sin(t), -Math.cos(t), 0) : new THREE.Vector3(-Math.sin(t), Math.cos(t), 0);
+          cone.position.set(radius * Math.cos(t), radius * Math.sin(t), 0).add(dir.clone().multiplyScalar(0.12));
+          cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+          inner.add(cone);
+        });
+        inner.rotation.z = Math.PI * 0.35;
+        outer.add(inner);
+        const ax = new THREE.Vector3(...mv.axis);
+        outer.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), ax);
+        if (!isRot) outer.position.copy(ax.clone().multiplyScalar(1.6));
+        g.add(outer);
+      }
+      this.scene.add(g);
+      this.arrow = g;
       this.dirty = true;
     }
     clearArrow() {
@@ -250,7 +355,6 @@
         if (!down.moved) return;
         this.view.theta = down.t - dx * 0.011;
         this.view.phi = Math.min(Math.PI - 0.25, Math.max(0.25, down.p - dy * 0.011));
-        this.userMoved = true;
         this.dirty = true;
       });
       const up = e => {
@@ -274,8 +378,8 @@
   const S = {
     cube: null, crossColor: 'W', mode: 'cube', // white cross on the bottom, yellow on top
     flow: null, busy: false, playing: false, history: [],
-    pairs: {}, pairsVersion: 0,
-    settings: Object.assign({ rotate: true, follow: true, speed: 450 }, store.get('settings', {})),
+    pairs: {}, pairList: [], pairsVersion: 0,
+    settings: Object.assign({ rotate: true, speed: 450 }, store.get('settings', {})),
   };
   let view3d;
 
@@ -287,7 +391,7 @@
     $('#scanner').hidden = !scanning;
     $('#cube-ui').hidden = scanning;
     $('#scan-panel').hidden = !scanning;
-    ['#pairs-card', '#sync-card', '#settings-card'].forEach(id => { $(id).hidden = scanning; });
+    ['#pairs-card', '#more-card'].forEach(id => { $(id).hidden = scanning; });
     $('#btn-newscan').hidden = scanning;
     $('#btn-cancelscan').hidden = !scanning || !S.cube;
     if (scanning) {
@@ -311,8 +415,7 @@
     }
     return null;
   }
-  function slotWords(pos) { return (pos[2] > 0 ? 'front' : 'back') + '-' + (pos[0] > 0 ? 'right' : 'left'); }
-  const SLOT_WORD = { FR: 'front-right', FL: 'front-left', BR: 'back-right', BL: 'back-left' };
+  const SLOT_WORD = { FR: 'front right', FL: 'front left', BR: 'back right', BL: 'back left' };
   function pairState(st, pair) {
     const D = D_COLOR(st);
     const ci = Cube.locate(st, [D, pair[0], pair[1]], D), ei = Cube.locate(st, pair, pair[0]);
@@ -326,44 +429,73 @@
     const slot = slotOfPair(st, pair);
     return { ci, ei, cc, ec, paired, solved: !!slot && Cube.slotSolved(st, slot), slot };
   }
-  function describeCase(st, pair) {
+  // One plain line on where the two pieces are, read in the view the solution starts from.
+  function caseLine(st, pair) {
     const p = pairState(st, pair);
-    if (!p) return [];
+    if (!p) return '';
+    if (p.paired) return 'The corner and edge are already joined. Just insert them.';
     const D = D_COLOR(st), cs = Cube.STICKERS[p.ci];
-    const face = cs.face === 'U' ? 'up' : cs.face === 'D' ? 'down' : 'to the ' + FACE_WORD[cs.face];
-    const cornerWhere = p.cc.pos[1] === 1 ? 'top layer' : 'bottom layer, in the ' + slotWords(p.cc.pos) + ' slot';
-    let edgeWhere;
-    if (p.ec.pos[1] === 1) edgeWhere = 'top layer';
-    else {
-      const own = p.slot && sameVec(p.ec.pos, Cube.STICKER_CUBIE[Cube.SLOTS[p.slot].edge].pos);
-      edgeWhere = own ? (p.ei === Cube.SLOTS[p.slot].edge ? 'in its slot, correct' : 'in its slot, flipped') : 'middle layer, in the ' + slotWords(p.ec.pos) + ' slot';
-    }
-    return [
-      `<div><b>Corner</b> · ${cornerWhere}, ${NAME[D]} facing ${face}</div>`,
-      `<div><b>Edge</b> · ${edgeWhere}</div>`,
-      p.paired ? '<div style="color:var(--good)"><b>Already paired</b> · just insert it</div>' : '',
-    ];
+    const facing = cs.face === 'U' ? 'up' : cs.face === 'D' ? 'down' : FACE_WORD[cs.face];
+    const corner = p.cc.pos[1] === 1 ? `Corner on top, ${NAME[D]} facing ${facing}` : `Corner stuck in a slot, ${NAME[D]} facing ${facing}`;
+    let edge;
+    if (p.ec.pos[1] === 1) edge = 'edge on top';
+    else if (p.slot && sameVec(p.ec.pos, Cube.STICKER_CUBIE[Cube.SLOTS[p.slot].edge].pos)) edge = p.ei === Cube.SLOTS[p.slot].edge ? 'edge already in place' : 'edge in its slot but flipped';
+    else edge = 'edge stuck in another slot';
+    return `${corner}; ${edge}.`;
   }
+  const isTurn = m => 'xyz'.includes(Cube.MOVES[m].base);
+  // For a whole-cube turn inside a flow: which color faces you afterwards.
+  function frontAfter(f, k) { return Cube.colorOf(f.states[k + 1], 'F'); }
+  function stepText(f, k) {
+    const m = f.moves[k];
+    if (!isTurn(m)) return moveText(m);
+    const st = f.states[k + 1];
+    return `Turn the cube so ${NAME[Cube.colorOf(st, 'F')]} faces you (${NAME[Cube.colorOf(st, 'U')]} stays on top)`;
+  }
+  const TURN_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg>';
+
+  // What to do for a move, in plain words. Directions are as you look at the front.
   function moveText(m) {
     const mv = Cube.MOVES[m], f = mv.base, a = mv.amount;
-    if (f === 'y') return a === 2 ? 'Turn the whole cube around: the back comes to the front' : a === 1 ? 'Turn the whole cube: the right side comes to the front' : 'Turn the whole cube: the left side comes to the front';
-    if (f === 'x') return a === 2 ? 'Flip the whole cube forward twice' : a === 1 ? 'Tilt the whole cube: the front goes up' : 'Tilt the whole cube: the top comes to the front';
-    if (f === 'z') return a === 2 ? 'Roll the whole cube half a turn' : a === 1 ? 'Roll the whole cube to the right' : 'Roll the whole cube to the left';
-    const words = {
-      R: ['Right face up', 'Right face down'], L: ['Left face down', 'Left face up'],
-      U: ['Top layer to the left', 'Top layer to the right'], D: ['Bottom layer to the right', 'Bottom layer to the left'],
-      F: ['Front face clockwise', 'Front face counter-clockwise'], B: ['Back face: top row slides left', 'Back face: top row slides right'],
+    const T = {
+      R: ['Right side up', 'Right side down', 'Right side twice'],
+      L: ['Left side down', 'Left side up', 'Left side twice'],
+      U: ['Top to the left', 'Top to the right', 'Top twice'],
+      D: ['Bottom to the right', 'Bottom to the left', 'Bottom twice'],
+      F: ['Front clockwise', 'Front counter-clockwise', 'Front twice'],
+      B: ['Back: top row goes left', 'Back: top row goes right', 'Back twice'],
+      y: ['Turn the whole cube left', 'Turn the whole cube right', 'Turn the whole cube around'],
+      x: ['Tip the whole cube back', 'Tip the whole cube forward', 'Flip the whole cube over'],
+      z: ['Roll the whole cube right', 'Roll the whole cube left', 'Roll the whole cube over'],
     };
-    if (a === 2) return cap(FACE_WORD[f]) + (f === 'U' || f === 'D' ? ' layer' : ' face') + ', half turn';
-    return words[f][a === 1 ? 0 : 1];
+    return T[f][a === 1 ? 0 : a === -1 ? 1 : 2];
   }
-  function groupMoves(moves) {
+  // Split a pair solution into what each part is for: turn the cube, join the pieces, insert.
+  const PHASE = {
+    turn: { name: 'Turn the cube', why: 'So the slot is at the front right.' },
+    pair: { name: 'Pair up', why: 'Join the corner and its edge into one block.' },
+    insert: { name: 'Insert', why: 'Drop the block into its slot.' },
+    cross: { name: 'Cross', why: 'Bring the four edges home, matching the side centers.' },
+  };
+  function phasesFor(f) {
+    if (f.kind === 'cross') return [{ key: 'cross', from: 0, to: f.moves.length }];
     const out = [];
-    let i = 0;
-    while (i < moves.length) {
-      const a = Cube.MOVES[moves[i]].base;
-      if (i + 2 < moves.length && !'Uxyz'.includes(a) && Cube.MOVES[moves[i + 1]].base === 'U' && moves[i + 2] === Cube.invertMove(moves[i])) { out.push([i, i + 1, i + 2]); i += 3; }
-      else { out.push([i]); i++; }
+    const off = f.rotation ? 1 : 0;
+    if (off) out.push({ key: 'turn', from: 0, to: 1 });
+    const n = f.moves.length;
+    let joined = -1;
+    for (let i = off; i <= n; i++) if (pairState(f.states[i], f.pair).paired) { joined = i; break; }
+    if (joined === off) out.push({ key: 'insert', from: off, to: n });
+    else if (joined > off && joined < n) { out.push({ key: 'pair', from: off, to: joined }); out.push({ key: 'insert', from: joined, to: n }); }
+    else {
+      // joined only by the final move: the last trigger (side, top, side back) is the insert
+      let cut = n;
+      if (n - off >= 4) {
+        const m = f.moves;
+        if (Cube.MOVES[m[n - 2]].base === 'U' && m[n - 1] === Cube.invertMove(m[n - 3])) cut = n - 3;
+      }
+      if (cut > off) out.push({ key: 'pair', from: off, to: cut });
+      out.push({ key: 'insert', from: cut, to: n });
     }
     return out;
   }
@@ -371,7 +503,8 @@
   function holdLine() {
     const st = S.cube;
     const U = Cube.colorOf(st, 'U'), F = Cube.colorOf(st, 'F');
-    $('#hold').innerHTML = `${chip(U)} ${cap(NAME[U])} on top · ${chip(F)} ${NAME[F]} facing you`;
+    $('#hold').innerHTML = (S.practice ? '<span class="tag">Practice</span>' : '') + `${chip(U)} top <span class="sep">·</span> ${chip(F)} front`;
+    $('#hold').setAttribute('aria-label', `Hold ${NAME[U]} on top and ${NAME[F]} in front`);
   }
   function focusFor(flow) {
     if (!flow) return null;
@@ -379,12 +512,19 @@
   }
   function paint() {
     view3d.setState(S.cube, focusFor(S.flow));
+    view3d.setSlot(S.flow && S.flow.kind === 'pair' ? slotOfPair(S.cube, S.flow.pair) : null);
     holdLine();
   }
   function saveCube() { store.set('cube', S.cube.join('')); }
 
   // ---------- pairs list ----------
   function pairKeyColors(st, slot) { return Cube.SLOTS[slot].edgeFaces.map(f => Cube.colorOf(st, f)); }
+  // A top view of the cube (front at the bottom) with the slot's corner filled in.
+  function slotMap(slot, solved) {
+    const at = { BL: [3, 3], BR: [16, 3], FL: [3, 16], FR: [16, 16] };
+    return '<svg class="map" viewBox="0 0 30 30" aria-hidden="true"><rect x="1" y="1" width="28" height="28" rx="7" fill="#f0f1f4"/>' +
+      Object.keys(at).map(k => `<rect x="${at[k][0]}" y="${at[k][1]}" width="11" height="11" rx="3" fill="${k === slot ? (solved ? '#0f7a45' : '#121318') : '#dcdfe5'}"/>`).join('') + '</svg>';
+  }
   async function refreshPairs() {
     if (S.mode !== 'cube' || !S.cube) return;
     const st = S.cube, v = ++S.pairsVersion;
@@ -395,14 +535,15 @@
       const pair = pairKeyColors(st, slot);
       return { slot, pair, key: pair.slice().sort().join(''), solved: Cube.slotSolved(st, slot), len: null };
     });
-    S.pairs = {};
+    S.pairs = {}; S.pairList = list;
     list.forEach(p => { S.pairs[p.key] = p; });
     renderPairs(list, crossOk);
     if (!crossOk) {
-      $('#cross-text').innerHTML = `${chip(D_COLOR(st))} ${cap(NAME[D_COLOR(st)])} cross: ${Cube.trackCross(st).filter((x, k) => x === Cube.CROSS[k].st).length} of 4 edges placed. <span class="spin"></span>`;
+      const D = D_COLOR(st);
+      $('#cross-text').innerHTML = `The ${NAME[D]} cross on the bottom isn't finished yet. Do it first; the pairs build on it. <span class="spin"></span>`;
       const r = await Solver.call({ op: 'cross', state: st });
       if (v !== S.pairsVersion) return;
-      $('#cross-text').innerHTML = `${chip(D_COLOR(st))} ${cap(NAME[D_COLOR(st)])} cross isn't finished. It takes <b>${r.optimal} moves</b>. Do it first, then the pairs unlock.`;
+      $('#cross-text').textContent = `The ${NAME[D]} cross on the bottom isn't finished yet. It takes ${r.optimal} moves; the pairs build on it.`;
       return;
     }
     for (const p of list) {
@@ -412,21 +553,31 @@
       p.len = r.solutions && r.solutions.length ? r.solutions[0].len : r.optimal;
       renderPairs(list, crossOk);
     }
+    setControls();
   }
+  function bestPair() {
+    const open = S.pairList.filter(p => !p.solved && p.len != null);
+    return open.length ? open.reduce((a, b) => (b.len < a.len ? b : a)) : null;
+  }
+  function pairName(pair) { return `${cap(NAME[pair[0]])}–${NAME[pair[1]]}`; }
   function renderPairs(list, crossOk) {
     const host = $('#pairs');
-    const open = list.filter(p => !p.solved && p.len != null);
-    const best = open.length ? Math.min(...open.map(p => p.len)) : null;
-    const done = list.filter(p => p.solved).length;
-    $('#pairs-status').textContent = `${done} of 4 solved`;
+    const open = list.filter(p => !p.solved);
+    const best = bestPair();
+    const done = list.length - open.length;
+    $('#pairs-status').textContent = done === 4 ? 'All done' : `${done} of 4 done`;
     host.innerHTML = '';
     list.forEach(p => {
       const b = document.createElement('button');
       b.className = 'pair' + (p.solved ? ' solved' : '');
       b.setAttribute('aria-pressed', String(!!S.flow && S.flow.key === p.key));
-      const meta = p.solved ? 'Solved ✓' : !crossOk ? 'After cross' : p.len == null ? '…' : `${p.len} moves`;
-      b.innerHTML = `<span class="pc">${chip(p.pair[0])}${chip(p.pair[1])}<span class="nm" style="margin-left:4px">${cap(NAME[p.pair[0]])}–${NAME[p.pair[1]]}</span></span>
-        <span class="meta"><span>${SLOT_WORD[p.slot]}</span>${p.solved || p.len == null ? `<span>${meta}</span>` : `<b>${meta}</b>`}</span>` + (!p.solved && p.len != null && p.len === best && open.length > 1 ? '<span><span class="badge">Fastest</span></span>' : '');
+      let meta;
+      if (p.solved) meta = 'Done';
+      else if (!crossOk) meta = 'After the cross';
+      else if (p.len == null) meta = '<span class="spin"></span>';
+      else meta = `<b>${p.len} moves</b>${best && best.key === p.key && open.length > 1 ? '<span class="badge">Fastest</span>' : ''}`;
+      b.innerHTML = `${slotMap(p.slot, p.solved)}<span class="nm">${chip(p.pair[0])}${chip(p.pair[1])} ${pairName(p.pair)}</span><span class="meta">${meta}</span>`;
+      b.setAttribute('aria-label', `${pairName(p.pair)} pair, ${SLOT_WORD[p.slot]} slot, ${p.solved ? 'done' : p.len != null ? p.len + ' moves' : ''}`);
       b.disabled = !crossOk && !p.solved;
       b.addEventListener('click', () => { if (!p.solved) startPair(p.pair); else toast('That pair is already in place.'); });
       host.appendChild(b);
@@ -443,7 +594,7 @@
     const D = D_COLOR(st);
     const flow = S.flow = {
       kind: 'pair', key: pair.slice().sort().join(''), pair, slot,
-      title: `${chip(pair[0])}${chip(pair[1])} ${cap(NAME[pair[0]])}–${NAME[pair[1]]} pair`,
+      title: `${chip(pair[0])}${chip(pair[1])} ${pairName(pair)} pair`,
       focus: [[D, pair[0], pair[1]].sort().join(''), pair.slice().sort().join('')],
       start: st, solutions: null, loading: true,
     };
@@ -455,6 +606,7 @@
     flow.rotation = r.rotation || '';
     flow.solutions = r.solutions;
     selectSolution(0);
+    if (window.innerWidth < 900) $('#flow-card').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
   async function startCross() {
     if (S.busy) return;
@@ -473,13 +625,15 @@
   }
   function selectSolution(i) {
     const f = S.flow;
+    const restarting = f.idx > 0;
     f.sel = i;
     f.moves = (f.rotation ? [f.rotation] : []).concat(f.solutions[i].moves);
     f.states = [f.start];
     f.moves.forEach(m => f.states.push(Cube.applyMove(f.states[f.states.length - 1], m)));
-    if (f.idx) toast('Back to the start of this pair');
+    f.phases = phasesFor(f);
     f.idx = 0;
     S.cube = f.start; saveCube();
+    if (restarting) toast('Back to the start of this pair');
     paint(); renderFlow(); afterStep();
   }
   function closeFlow() {
@@ -490,13 +644,10 @@
     refreshPairs();
   }
   function renderPairsPressed() {
-    document.querySelectorAll('#pairs .pair').forEach(b => { b.setAttribute('aria-pressed', 'false'); });
-    if (!S.flow) return;
-    const p = S.pairs[S.flow.key];
-    if (!p) return;
-    const idx = ['FL', 'FR', 'BL', 'BR'].indexOf(p.slot);
-    const b = document.querySelectorAll('#pairs .pair')[idx];
-    if (b) b.setAttribute('aria-pressed', 'true');
+    document.querySelectorAll('#pairs .pair').forEach((b, i) => {
+      const p = S.pairList[i];
+      b.setAttribute('aria-pressed', String(!!(S.flow && p && S.flow.key === p.key)));
+    });
   }
   function renderFlow() {
     const f = S.flow;
@@ -504,121 +655,135 @@
     $('#player').hidden = !f;
     $('#tap-hint').hidden = !!f;
     $('#stage').classList.toggle('flowing', !!f);
-    view3d.setPad(f ? $('#player').offsetHeight + 16 : 48);
+    view3d.setPad(f ? $('#player').offsetHeight + 20 : 56);
     if (!f) return;
     $('#flow-title').innerHTML = f.title;
     if (f.loading) {
-      $('#flow-case').innerHTML = '<div class="muted"><span class="spin"></span> Finding the shortest ways to solve it…</div>';
-      $('#opts').innerHTML = ''; $('#strip').innerHTML = '';
-      $('#cap-move').textContent = '…'; $('#cap-move').className = ''; $('#cap-text').textContent = 'Finding the shortest solutions'; $('#cap-note').textContent = ''; $('#cap-count').textContent = '';
+      $('#flow-case').innerHTML = '<span class="spin"></span> Working out the quickest way…';
+      $('#phases').innerHTML = ''; $('#opts').innerHTML = ''; $('#others').hidden = true;
+      $('#cap-move').textContent = '…'; $('#cap-move').className = 'mv-big';
+      $('#cap-text').textContent = 'Working it out'; $('#cap-phase').textContent = ''; $('#cap-count').textContent = '';
       setControls();
       return;
     }
-    // case summary is read in the frame the solution is played in
     const caseState = f.rotation ? Cube.applyMove(f.start, f.rotation) : f.start;
-    if (f.kind === 'pair') {
-      const lines = describeCase(caseState, f.pair);
-      const where = f.rotation ? `<div><b>Slot</b> · ${SLOT_WORD[f.slot]} → turn the cube (<span class="alg">${f.rotation}</span>) so it's front-right</div>` : `<div><b>Slot</b> · ${SLOT_WORD[f.slot]}</div>`;
-      $('#flow-case').innerHTML = where + lines.join('');
-    } else {
-      $('#flow-case').innerHTML = `<div>Edges already placed: ${Cube.trackCross(f.start).filter((x, k) => x === Cube.CROSS[k].st).length} of 4</div>`;
-    }
+    $('#flow-case').textContent = f.kind === 'pair'
+      ? caseLine(caseState, f.pair)
+      : `${Cube.trackCross(f.start).filter((x, k) => x === Cube.CROSS[k].st).length} of 4 edges are already home.`;
+    // other ways: the shortest one and one more, tucked away
     const sols = f.solutions;
     const shortest = sols.reduce((a, x) => (x.len < a.len ? x : a), sols[0]);
     let shown = sols.slice(0, 3);
     if (!shown.includes(shortest)) shown = [sols[0], sols[1], shortest];
+    $('#others').hidden = shown.length < 2;
     $('#opts').innerHTML = '';
     shown.forEach(s => {
       const i = sols.indexOf(s);
       const b = document.createElement('button');
       b.className = 'opt';
       b.setAttribute('aria-pressed', String(i === f.sel));
-      const tag = i === 0 ? 'Recommended' : s === shortest && s.len < sols[0].len ? 'Shortest' : s.len === shortest.len ? 'Also shortest' : 'Alternative';
+      const tag = i === 0 ? 'Recommended' : s === shortest && s.len < sols[0].len ? 'Shortest' : 'Also good';
       b.innerHTML = `<span class="n">${s.len} moves<br>${tag}</span><span class="alg">${s.moves.join(' ')}</span>`;
       b.addEventListener('click', () => { if (!S.busy && f.sel !== i) { stopPlay(); selectSolution(i); } });
       $('#opts').appendChild(b);
     });
-    renderStrip();
+    renderPhases();
     setControls();
   }
-  function renderStrip() {
-    const f = S.flow, host = $('#strip');
+  function phaseAt(f, i) { return f.phases.find(p => i >= p.from && i < p.to) || f.phases[f.phases.length - 1]; }
+  function renderPhases() {
+    const f = S.flow, host = $('#phases');
     host.innerHTML = '';
-    const rotOffset = f.rotation ? 1 : 0;
-    if (f.rotation) host.appendChild(moveChip(0, true));
-    const body = f.moves.slice(rotOffset);
-    groupMoves(body).forEach(g => {
-      if (g.length === 1) host.appendChild(moveChip(g[0] + rotOffset));
-      else {
-        const span = document.createElement('span'); span.className = 'grp';
-        g.forEach(k => span.appendChild(moveChip(k + rotOffset)));
-        host.appendChild(span);
-      }
+    const cur = f.idx < f.moves.length ? phaseAt(f, f.idx) : null;
+    f.phases.forEach((ph, n) => {
+      const li = document.createElement('li');
+      const state = f.idx >= ph.to ? 'done' : ph === cur ? 'now' : '';
+      li.className = 'phase ' + state;
+      const info = PHASE[ph.key];
+      li.innerHTML = `<span class="num">${state === 'done' ? '✓' : n + 1}</span><span class="ph-name">${info.name}${state === 'now' ? `<span class="ph-why">${info.why}</span>` : ''}</span>`;
+      const row = document.createElement('div');
+      row.className = 'moves';
+      for (let k = ph.from; k < ph.to; k++) row.appendChild(moveChip(k));
+      li.appendChild(row);
+      host.appendChild(li);
     });
   }
-  function moveChip(k, rot) {
+  function moveChip(k) {
     const f = S.flow;
     const b = document.createElement('button');
-    b.className = 'mv' + (rot ? ' rot' : '') + (k < f.idx ? ' done' : k === f.idx ? ' now' : '');
-    b.textContent = f.moves[k];
-    b.title = moveText(f.moves[k]);
+    const turn = isTurn(f.moves[k]);
+    b.className = 'mv' + (turn ? ' turn' : '') + (k < f.idx ? ' done' : k === f.idx ? ' now' : '');
+    if (turn) b.innerHTML = `${chip(frontAfter(f, k))} ${cap(NAME[frontAfter(f, k)])} front`;
+    else b.textContent = f.moves[k];
+    b.title = stepText(f, k);
+    b.setAttribute('aria-label', `Step ${k + 1}: ${stepText(f, k)}`);
     b.addEventListener('click', () => goTo(k));
     return b;
   }
+  const ICON_PLAY = '<path d="M7 5v14l11-7z"/>', ICON_PAUSE = '<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/>';
+  const ICON_NEXT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   function setControls() {
     const f = S.flow;
-    const loading = !f || f.loading;
+    if (!f) return;
+    const loading = f.loading, end = !loading && f.idx >= f.moves.length;
     $('#btn-prev').disabled = loading || S.busy || f.idx === 0;
-    $('#btn-restart').disabled = loading || S.busy || f.idx === 0;
-    $('#btn-next').disabled = loading || (S.busy && !S.playing) || f.idx >= f.moves.length;
-    $('#btn-play').disabled = loading || (!S.playing && f.idx >= f.moves.length);
-    $('#ico-play').innerHTML = S.playing ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M5 5v14l8-7zM13 5v14l8-7z"/>';
-    $('#btn-play').setAttribute('aria-label', S.playing ? 'Pause' : 'Play all');
+    $('#btn-play').disabled = loading || end;
+    $('#ico-play').innerHTML = S.playing ? ICON_PAUSE : ICON_PLAY;
+    $('#btn-play').setAttribute('aria-label', S.playing ? 'Pause' : 'Play the rest');
+    const next = $('#btn-next');
+    next.disabled = loading || (S.busy && !S.playing);
+    next.classList.toggle('good', end);
+    next.classList.toggle('primary', !end);
+    if (!end) { next.innerHTML = `Next move ${ICON_NEXT}`; return; }
+    const best = bestPair();
+    const allDone = S.pairList.length && S.pairList.every(p => p.solved);
+    if (allDone) { next.innerHTML = S.practice ? `New practice cube ${ICON_NEXT}` : 'All four pairs done'; next.disabled = !S.practice; return; }
+    next.innerHTML = best ? `Next pair: ${pairName(best.pair)} ${ICON_NEXT}` : 'Pick the next pair';
+    next.disabled = !best;
   }
-  // Caption, arrow, camera and notes for the current position in the flow.
+  function onNext() {
+    const f = S.flow;
+    if (!f) return;
+    stopPlay();
+    if (f.idx < f.moves.length) { step(1); return; }
+    const best = bestPair();
+    if (best) startPair(best.pair);
+    else if (S.practice && S.pairList.every(p => p.solved)) loadPractice();
+  }
+  // Caption, arrow, slot marker and camera for the current position in the flow.
   function afterStep(prevIdx) {
     const f = S.flow;
     if (!f || f.loading) return;
     const next = f.moves[f.idx];
     const n = f.moves.length;
-    $('#cap-count').textContent = `${f.idx}/${n}`;
-    if (next) {
-      $('#cap-move').textContent = next; $('#cap-move').className = '';
-      $('#cap-text').textContent = moveText(next);
-    } else {
-      $('#cap-move').textContent = '✓'; $('#cap-move').className = 'fin';
-      $('#cap-text').textContent = f.kind === 'pair' ? 'Pair inserted. Pick the next pair.' : 'Cross done. Now pick a pair.';
-    }
-    let note = '';
-    const st = f.states[f.idx];
+    const capMove = $('#cap-move');
+    let event = '';
     if (f.kind === 'pair') {
-      const p = pairState(st, f.pair);
+      const p = pairState(f.states[f.idx], f.pair);
       const was = prevIdx != null ? pairState(f.states[prevIdx], f.pair) : null;
-      if (p.solved && f.idx === n) note = 'Solved in ' + f.solutions[f.sel].len + ' moves.';
-      else if (p.paired && (!was || !was.paired)) note = 'Corner and edge are paired. Insert them as one block.';
-      else if (p.paired) note = 'Still paired. Keep the block together.';
-      else if (was && was.paired && !p.paired) note = 'Pair split on purpose to line up the insert.';
-      else if (was && was.cc.pos[1] !== 1 && p.cc.pos[1] === 1) note = 'Corner is out of the slot, into the top layer.';
-      else if (was && was.ec.pos[1] !== 1 && p.ec.pos[1] === 1) note = 'Edge is out of the slot, into the top layer.';
-      else if (f.idx === 0 && f.rotation) note = 'First turn the whole cube so the slot is at the front-right.';
-    } else if (f.idx === n) note = 'All four cross edges are home.';
-    $('#cap-note').textContent = note;
-    view3d.showArrow(next || null);
-    if (next && S.settings.follow) {
-      const face = Cube.MOVES[next].base;
-      if (!'xyz'.includes(face) && !view3d.faceVisible(face)) {
-        const H = view3d.HOME;
-        const target = face === 'L' ? [-H.theta, H.phi] : face === 'B' ? [Math.PI - H.theta, H.phi] : face === 'D' ? [H.theta, 2.05] : [H.theta, H.phi];
-        view3d.lookFrom(target[0], target[1], 450);
-        view3d.swung = true;
-      } else if (view3d.swung && 'URFxyz'.includes(face)) {
-        view3d.lookFrom(view3d.HOME.theta, view3d.HOME.phi, 450);
-        view3d.swung = false;
-      }
+      if (p.paired && !p.solved && was && !was.paired && prevIdx < f.idx) event = '✓ Corner and edge joined';
     }
-    renderStrip();
+    if (next) {
+      const ph = phaseAt(f, f.idx);
+      if (isTurn(next)) { capMove.innerHTML = TURN_ICON; capMove.className = 'mv-big rot'; }
+      else { capMove.textContent = next; capMove.className = 'mv-big'; }
+      $('#cap-text').textContent = stepText(f, f.idx);
+      $('#cap-phase').innerHTML = event ? `<span class="event">${event}</span>` : PHASE[ph.key].name;
+      $('#cap-count').textContent = `${f.idx + 1} of ${n}`;
+    } else {
+      capMove.textContent = '✓'; capMove.className = 'mv-big fin';
+      $('#cap-text').textContent = f.kind === 'pair' ? 'Pair inserted' : 'Cross done';
+      $('#cap-phase').innerHTML = `<span class="event">${n} moves</span>`;
+      $('#cap-count').textContent = '';
+    }
+    view3d.showArrow(next || null);
+    view3d.setSlot(f.kind === 'pair' && !(f.idx === n) ? slotOfPair(S.cube, f.pair) : null);
+    // the back layer turns out of sight from the usual view: swing round for it, then back
+    if (next && Cube.MOVES[next].base === 'B') { view3d.lookFrom(Math.PI - view3d.HOME.theta, view3d.HOME.phi, 450); view3d.swung = true; }
+    else if (view3d.swung) { view3d.lookFrom(view3d.HOME.theta, view3d.HOME.phi, 450); view3d.swung = false; }
+    renderPhases();
     setControls();
-    if (f.idx === n) { refreshPairs(); }
+    if (f.idx === n) refreshPairs();
   }
   async function step(dir, fast) {
     const f = S.flow;
@@ -628,6 +793,7 @@
     S.busy = true; setControls();
     view3d.clearArrow();
     const m = dir > 0 ? f.moves[from] : Cube.invertMove(f.moves[to]);
+    if ('xyz'.includes(Cube.MOVES[m].base)) view3d.setSlot(null);
     const ms = fast ? Math.min(180, S.settings.speed) : S.settings.speed;
     await view3d.turn(m, ms, () => {
       f.idx = to; S.cube = f.states[to];
@@ -655,7 +821,7 @@
     S.playing = true; setControls();
     while (S.playing && S.flow === f && f.idx < f.moves.length) {
       await step(1);
-      if (S.playing) await sleep(260);
+      if (S.playing) await sleep(280);
     }
     S.playing = false; setControls();
   }
@@ -663,7 +829,7 @@
 
   async function manualMove(m) {
     if (S.busy) return;
-    if (S.flow) { S.flow = null; renderFlow(); view3d.clearArrow(); }
+    if (S.flow) { S.flow = null; renderFlow(); view3d.clearArrow(); view3d.setSlot(null); }
     S.busy = true;
     S.history.push(S.cube);
     const next = Cube.applyMove(S.cube, m);
@@ -677,16 +843,41 @@
     const r = Cube.slotForSticker(S.cube, idx);
     if (r.slot) {
       const pair = pairKeyColors(S.cube, r.slot);
-      if (Cube.slotSolved(S.cube, r.slot)) { toast(`${cap(NAME[pair[0]])}–${NAME[pair[1]]} is already solved.`); return; }
+      if (Cube.slotSolved(S.cube, r.slot)) { toast(`${pairName(pair)} is already in place.`); return; }
       if (S.flow && S.flow.key === pair.slice().sort().join('')) return;
       startPair(pair);
-    } else if (r.kind === 'cross') toast(Cube.crossSolved(S.cube) ? 'That\'s a cross edge, already in place.' : 'That\'s a cross edge. Use "Show cross moves".');
-    else if (r.kind === 'last') toast('That piece belongs to the last layer, not F2L.');
+    } else if (r.kind === 'cross') toast(Cube.crossSolved(S.cube) ? 'That\'s a cross edge, already in place.' : 'That\'s a cross edge. Start with "Show the cross moves".');
+    else if (r.kind === 'last') toast('That piece belongs to the last layer, not to a pair.');
+  }
+
+  // A practice position: white cross solved, all four pairs scattered. Made only from
+  // "turn a side, move the top, turn the side back" sequences, which never disturb the cross.
+  function randomPracticeCube() {
+    const rand = n => Math.floor(Math.random() * n);
+    for (let attempt = 0; attempt < 60; attempt++) {
+      let st = Cube.solvedFromCenters(STD_LAYOUT);
+      for (let i = 0; i < 12; i++) {
+        const side = ['R', 'L', 'F', 'B'][rand(4)] + ['', "'"][rand(2)];
+        st = Cube.applyAlg(st, [side, ['U', "U'", 'U2'][rand(3)], Cube.invertMove(side), ['U', "U'", 'U2'][rand(3)]]);
+      }
+      st = canonical(st);
+      if (['FR', 'FL', 'BR', 'BL'].every(sl => !Cube.slotSolved(st, sl))) return st;
+    }
+    return null;
+  }
+  function loadPractice() {
+    const st = randomPracticeCube();
+    if (!st) return;
+    if (S.mode === 'scan') Scan.stopCamera();
+    loadCube(st, { practice: true });
+    toast('Practice cube: pick any pair');
   }
 
   // Load a cube into the solve screen with the intro spin.
   function loadCube(state, opts) {
     S.cube = state; S.flow = null; S.history = [];
+    S.practice = !!(opts && opts.practice);
+    store.set('practice', S.practice);
     saveCube();
     setMode('cube');
     renderFlow(); paint(); refreshPairs();
@@ -721,7 +912,7 @@
     nextText() {
       const n = this.count();
       if (this.problem) return 'Something doesn’t fit';
-      if (this.needColor) return `One more: show the ${NAME[this.needColor]}-center side`;
+      if (this.needColor) return this.retaking ? `Retake: show the ${NAME[this.needColor]} side again` : `One more: show the ${NAME[this.needColor]}-center side`;
       return n === 0 ? 'Show any side of your cube' : `Side ${n + 1} of 5 · turn to a new side`;
     },
     prompt() {
@@ -731,9 +922,9 @@
         ? 'Tap a side marked below to check its colors again.'
         : this.blocked
           ? (window.top !== window
-            ? 'The Claude app doesn’t allow a live camera view here, so your camera opens for each side.'
-            : 'Camera access is off, so your camera opens for each side instead. To get the live view, allow the camera for this site in your browser settings.')
-            + ' Hold the cube straight on so one face fills most of the picture.'
+            ? 'The Claude app doesn\u2019t allow live video here, so take a photo of each side instead.'
+            : 'Camera access is off. Allow it for this site to scan live, or take a photo of each side.')
+            + ' Hold the cube straight on.'
           : 'Hold the cube about 20 cm away, straight on.';
       $('#btn-capture-label').textContent = this.count() ? 'Capture next side' : 'Capture side';
       $('#vf-buttons').hidden = !this.blocked || !!this.problem;
@@ -1039,7 +1230,7 @@
       this.review = null;
       if (this.problem) this.problem.delete(c);
       if (this.problem && !this.problem.size) this.problem = null;
-      if (this.needColor && this.faces[this.needColor]) this.needColor = null;
+      if (this.needColor && this.faces[this.needColor]) { this.needColor = null; this.retaking = false; }
       this.showReview(false);
       this.renderFaces();
       if (this.finish()) return;
@@ -1072,15 +1263,16 @@
       let o = Cube.orientFromPhotos(Vision.classify(samples, fixed).grids, STD_LAYOUT);
       if (!o.valid) { const o2 = Cube.orientFromPhotos(confirmed, STD_LAYOUT); if (o2.valid) o = o2; }
       if (!o.valid && n === 6) { const fixedState = Cube.repair(o); if (fixedState) o = { valid: true, state: fixedState }; }
+      const suspects = [];
       if (!o.valid && n === 6) {
         // one badly captured side shouldn't block everything: leave each out in turn and
-        // accept only if exactly one cube comes out
+        // accept only if exactly one cube comes out; the sides that make it work are suspects
         const found = new Map();
         for (const skip in this.faces) {
           const s5 = {}, f5 = {};
           for (const c in samples) if (c !== skip) { s5[c] = samples[c]; f5[c] = fixed[c]; }
           const r = Cube.orientFromPhotos(Vision.classify(s5, f5).grids, STD_LAYOUT);
-          if (r.valid) found.set(r.state.join(''), r);
+          if (r.valid) { found.set(r.state.join(''), r); suspects.push(skip); }
         }
         if (found.size === 1) o = Array.from(found.values())[0];
       }
@@ -1091,14 +1283,82 @@
         return true;
       }
       if (n === 5) { this.needColor = Vision.COLORS.find(c => !this.faces[c]); return false; }
-      // six faces that don't fit: point at the sides holding the pieces that don't fit
-      const bad = new Set();
-      if (o.check && o.layout) o.check.bad.forEach(i => bad.add(o.layout[Math.floor(i / 9)]));
-      this.problem = bad.size ? bad : new Set(Object.keys(this.faces));
+      // six faces that don't fit: mark the sides holding the pieces that don't fit, and open
+      // the final check so the user can fix the few stickers at fault before solving
+      const perSide = {};
+      if (o.check && o.layout) o.check.bad.forEach(i => { const c = o.layout[Math.floor(i / 9)]; perSide[c] = (perSide[c] || 0) + 1; });
+      const ranked = suspects.length ? suspects : Object.keys(perSide).sort((a, b) => perSide[b] - perSide[a]);
+      this.problem = new Set(ranked.length ? ranked : Object.keys(this.faces));
       this.renderFaces();
+      if (o.state) Final.open(o.state, ranked[0] || null);
       return false;
     },
   };
+  // ---------- final check: the whole cube laid flat, when the scan doesn't add up ----------
+  const NET_AT = { U: [0, 3], L: [3, 0], F: [3, 3], R: [3, 6], B: [3, 9], D: [6, 3] };
+  const Final = {
+    state: null, sel: -1,
+    // `suspect`: the side most likely misread, offered for a retake
+    open(state, suspect) {
+      this.state = state.slice(); this.sel = -1; this.suspect = suspect || null;
+      $('#final').hidden = false;
+      this.render();
+    },
+    close() { $('#final').hidden = true; },
+    render() {
+      const st = this.state, v = Cube.validate(st), bad = new Set(v.bad);
+      const counts = {};
+      st.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+      const over = Vision.COLORS.filter(c => counts[c] > 9), under = Vision.COLORS.filter(c => (counts[c] || 0) < 9);
+      let msg;
+      if (v.valid) msg = 'Everything fits. Your cube is ready.';
+      else if (over.length || under.length) msg = `<b>${over.map(c => `${counts[c]} ${NAME[c]}`).join(', ')}</b>${over.length && under.length ? ' but only ' : ''}<b>${under.map(c => `${counts[c] || 0} ${NAME[c]}`).join(', ')}</b>. A cube has 9 of each. The outlined stickers don't fit; tap one to change it.`;
+      else if (bad.size) msg = 'The outlined stickers make pieces that don\u2019t exist. One of them is probably misread; tap it to change it.';
+      else msg = `Every piece exists, but they can't sit like this (${v.reason.toLowerCase().replace(/\.$/, '')}). A side was probably captured turned. Rescan the side you're least sure of.`;
+      if (!v.valid && this.suspect) msg = `The <b>${NAME[this.suspect]}</b> side was probably misread. Retake it, or tap an outlined sticker to fix it.`;
+      $('#final-msg').innerHTML = msg;
+      const net = $('#net');
+      net.innerHTML = '';
+      Cube.STICKERS.forEach(s => {
+        const b = document.createElement('button');
+        const [r0, c0] = NET_AT[s.face];
+        b.style.gridRow = r0 + s.r + 1; b.style.gridColumn = c0 + s.c + 1;
+        b.style.background = HEX[st[s.i]];
+        const center = s.r === 1 && s.c === 1;
+        b.className = center ? 'center' : bad.has(s.i) ? 'bad' : '';
+        b.setAttribute('aria-pressed', String(this.sel === s.i));
+        b.setAttribute('aria-label', `${FACE_WORD[s.face]} side, row ${s.r + 1}, column ${s.c + 1}: ${NAME[st[s.i]]}`);
+        if (!center) b.addEventListener('click', () => { this.sel = this.sel === s.i ? -1 : s.i; this.render(); });
+        net.appendChild(b);
+      });
+      const pal = $('#final-palette');
+      pal.hidden = this.sel < 0;
+      pal.innerHTML = '';
+      if (this.sel >= 0) Vision.COLORS.forEach(c => {
+        const b = document.createElement('button');
+        b.style.background = HEX[c];
+        b.setAttribute('aria-label', 'Make it ' + NAME[c]);
+        b.addEventListener('click', () => { this.state[this.sel] = c; this.sel = -1; this.render(); });
+        pal.appendChild(b);
+      });
+      const go = $('#final-go'), again = $('#final-rescan');
+      go.disabled = !v.valid;
+      go.className = 'btn ' + (v.valid ? 'primary' : '');
+      again.className = 'btn ' + (v.valid ? '' : 'primary');
+      again.innerHTML = this.suspect ? `${chip(this.suspect)} Retake ${NAME[this.suspect]} side` : 'Rescan a side';
+    },
+    // back to the camera for just the suspect side
+    retake() {
+      this.close();
+      const c = this.suspect;
+      if (!c) { toast('Tap a marked side to check it again'); return; }
+      delete Scan.faces[c];
+      Scan.problem = null; Scan.needColor = c; Scan.retaking = true; Scan.stable = null;
+      Scan.renderFaces(); Scan.prompt();
+      if (Scan.blocked) $('#in-capture').click();
+    },
+  };
+
   function roundRectPath(x, a, b, w, h, r) {
     x.moveTo(a + r, b); x.arcTo(a + w, b, a + w, b + h, r); x.arcTo(a + w, b + h, a, b + h, r); x.arcTo(a, b + h, a, b, r); x.arcTo(a, b, a + w, b, r); x.closePath();
   }
@@ -1119,15 +1379,19 @@
     $('#btn-cancelscan').addEventListener('click', () => setMode('cube'));
     $('#in-capture').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; Scan.fromFile(f); });
     $('#rv-ok').addEventListener('click', () => Scan.confirm());
+    $('#final-close').addEventListener('click', () => Final.close());
+    $('#btn-random').addEventListener('click', () => loadPractice());
+    $('#btn-random-scan').addEventListener('click', () => loadPractice());
+    $('#final-rescan').addEventListener('click', () => Final.retake());
+    $('#final-go').addEventListener('click', () => { Final.close(); Scan.stopCamera(); loadCube(canonical(Final.state)); toast('Got it. Hold your cube as shown.'); });
     $('#btn-restart-scan').addEventListener('click', () => { Scan.enter(); toast('Starting over'); });
     $('#rv-retake').addEventListener('click', () => Scan.retake());
     $('#rv-photo').addEventListener('click', e => Scan.tapPhoto(e));
     new ResizeObserver(() => { if (Scan.review) Scan.drawReviewPhoto(); }).observe($('#rv-photo'));
     $('#btn-cross').addEventListener('click', () => startCross());
     $('#btn-close-flow').addEventListener('click', () => closeFlow());
-    $('#btn-next').addEventListener('click', () => { stopPlay(); step(1); });
+    $('#btn-next').addEventListener('click', () => onNext());
     $('#btn-prev').addEventListener('click', () => { stopPlay(); step(-1); });
-    $('#btn-restart').addEventListener('click', () => { stopPlay(); if (S.flow) goTo(0); });
     $('#btn-play').addEventListener('click', () => play());
     $('#btn-view').addEventListener('click', () => { view3d.lookFrom(view3d.HOME.theta, view3d.HOME.phi, 500); view3d.swung = false; });
     $('#btn-undo').addEventListener('click', () => {
@@ -1135,30 +1399,29 @@
       if (S.flow) { S.flow = null; renderFlow(); view3d.clearArrow(); }
       S.cube = S.history.pop(); paint(); saveCube(); refreshPairs();
     });
-    const rot = $('#opt-rotate'), fol = $('#opt-follow'), spd = $('#opt-speed');
-    rot.checked = S.settings.rotate; fol.checked = S.settings.follow; spd.value = S.settings.speed;
+    const rot = $('#opt-rotate'), spd = $('#opt-speed');
+    rot.checked = S.settings.rotate; spd.value = S.settings.speed;
     const saveSettings = () => store.set('settings', S.settings);
     rot.addEventListener('change', () => { S.settings.rotate = rot.checked; saveSettings(); const f = S.flow; if (f && f.kind === 'pair') { S.cube = f.start; startPair(f.pair); } else refreshPairs(); });
-    fol.addEventListener('change', () => { S.settings.follow = fol.checked; saveSettings(); });
     spd.addEventListener('input', () => { S.settings.speed = +spd.value; saveSettings(); });
     document.addEventListener('keydown', e => {
       if (S.mode !== 'cube' || e.target.closest('input,select,textarea')) return;
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); stopPlay(); step(1); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); stopPlay(); step(-1); }
     });
-    new ResizeObserver(() => { if (S.flow) view3d.setPad($('#player').offsetHeight + 16); }).observe($('#player'));
+    new ResizeObserver(() => { if (S.flow) view3d.setPad($('#player').offsetHeight + 20); }).observe($('#player'));
     buildPad();
   }
 
   async function init() {
-    window.F2L = { S, Scan }; // handy for debugging from the console
+    window.F2L = { S, Scan, Final }; // handy for debugging from the console
     document.querySelectorAll('.app-version').forEach(el => { el.textContent = 'Version ' + (APP_VERSION.startsWith('__') ? 'preview' : APP_VERSION); });
     view3d = new Cube3D($('#stage'), onTapSticker);
     wire();
     Solver.call({ op: 'warm' });
     const saved = store.get('cube', null);
     if (saved && saved.length === 54 && Cube.validate(saved.split('')).valid) {
-      loadCube(canonical(saved.split('')), {});
+      loadCube(canonical(saved.split('')), { practice: store.get('practice', false) });
       return;
     }
     // No cube of yours yet: open straight on the scanner.

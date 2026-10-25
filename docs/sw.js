@@ -1,6 +1,6 @@
 // Offline support for the hosted app: own files are fetched fresh when online and served
 // from the cache when offline; fonts are cached the first time they load.
-const CACHE = 'f2l-coach-1792900339366';
+const CACHE = 'f2l-coach-1792901526752';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
