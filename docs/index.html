@@ -89,6 +89,12 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .hold { position: absolute; top: 12px; left: 12px; font-size: 13px; font-weight: 600; color: var(--ink-2); background: rgba(255,255,255,.9); border-radius: 999px; padding: 5px 11px 5px 7px; box-shadow: var(--shadow); display: flex; gap: 6px; align-items: center; max-width: calc(100% - 70px); }
 .hold .sep { color: #b9bcc6; font-weight: 400; }
 .hold .tag { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 7px; margin-right: 2px; }
+.bottom-map { position: absolute; top: 54px; left: 12px; display: grid; gap: 4px; justify-items: center; background: rgba(255,255,255,.9); border-radius: 12px; padding: 6px 6px 5px; box-shadow: var(--shadow); }
+.bm-grid { display: grid; grid-template-columns: repeat(3, 13px); gap: 2px; padding: 2px; background: #d9d3c6; border-radius: 5px; }
+.bm-grid i { width: 13px; height: 13px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.bm-label { font-size: 10.5px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.bm-label.ok { color: var(--good); }
+.bm-label.out { color: var(--warn); }
 .stage-tools { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
 .stage-tools .icon-btn { box-shadow: var(--shadow); border-color: transparent; }
 .tap-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); background: rgba(255,255,255,.94); box-shadow: var(--shadow); border-radius: 999px; padding: 8px 15px; font-size: 13px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
@@ -293,6 +299,10 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       </div>
       <div class="cube-ui" id="cube-ui">
         <div class="hold" id="hold"></div>
+        <div class="bottom-map" id="bottom-map" role="img" title="Bottom of the cube, seen through from above">
+          <div class="bm-grid" id="bm-grid"></div>
+          <span class="bm-label" id="bm-label"></span>
+        </div>
         <div class="stage-tools">
           <button class="icon-btn" id="btn-random" title="New random practice cube" aria-label="New random practice cube"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></button>
           <button class="icon-btn" id="btn-view" title="Reset view" aria-label="Reset view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></button>
@@ -1441,7 +1451,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
   const STD_LAYOUT = ['Y', 'O', 'G', 'W', 'R', 'B']; // U R F D L B of a standard-scheme cube
   const FACE_WORD = { U: 'top', D: 'bottom', F: 'front', B: 'back', R: 'right', L: 'left' };
   const ACCENT = 0x4f46e5;
-  const APP_VERSION = '25 Oct, 12:46';   // stamped by build-single.mjs
+  const APP_VERSION = '25 Oct, 12:49';   // stamped by build-single.mjs
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   const chip = c => `<span class="chip" style="background:${HEX[c]}"></span>`;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1649,19 +1659,21 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
         this.anims.push({ ms, step, done });
       });
     }
-    // Paint tiles from a 54-color state; `focus` (sorted color keys) keeps those pieces in full
-    // color and turns the rest a quiet gray. Centers stay faintly tinted so faces stay readable.
-    setState(state, focus) {
+    // Paint tiles from a 54-color state. `focus` (sorted color keys) marks pieces in full color
+    // with dark frames; `keep` shows pieces in full color without frames (the white cross);
+    // the rest turn a quiet gray. Centers stay faintly tinted so faces stay readable.
+    setState(state, focus, keep) {
       const quiet = new THREE.Color('#c3c8d0');
       for (const c of this.cubies) {
         const meshes = c.obj.children.filter(m => m.userData.idx != null);
         const key = meshes.map(m => state[m.userData.idx]).sort().join('');
         const isCenter = meshes.length === 1;
-        const dim = focus && !focus.has(key);
-        const marked = !!focus && !dim && !isCenter;
+        const marked = !!focus && focus.has(key) && !isCenter;
+        const dim = !!focus && !marked && !(keep && keep.has(key)) && !(isCenter && keep);
         for (const m of meshes) {
           const col = new THREE.Color(HEX[state[m.userData.idx]]);
           if (dim) col.lerp(quiet, isCenter ? 0.5 : 0.94);
+          else if (focus && isCenter) col.lerp(quiet, 0.25);
           m.material.color.copy(col);
           m.userData.ring.visible = marked;
         }
@@ -1962,8 +1974,30 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     if (!flow) return null;
     return new Set(flow.focus);
   }
+  // The white cross stays in color while a pair is solved, so you can watch it leave and return.
+  function keepFor(flow) {
+    if (!flow || flow.kind !== 'pair') return null;
+    const st = flow.start;
+    return new Set(Cube.CROSS.map(e => e.faces.map(f => Cube.colorOf(st, f)).sort().join('')));
+  }
+  // The bottom face, drawn as if seen through the cube from above (front at the bottom),
+  // so the white cross can be watched while the cube is viewed from the top.
+  function renderBottom() {
+    const st = S.cube, host = $('#bm-grid');
+    if (!st || !host) return;
+    const D = Cube.FACES.indexOf('D') * 9;
+    let html = '';
+    for (let i = 0; i < 3; i++) for (let c = 0; c < 3; c++) html += `<i style="background:${HEX[st[D + (2 - i) * 3 + c]]}"></i>`;
+    host.innerHTML = html;
+    const ok = Cube.crossSolved(st);
+    const label = $('#bm-label');
+    label.textContent = ok ? 'Cross ✓' : 'Cross out';
+    label.className = 'bm-label ' + (ok ? 'ok' : 'out');
+    $('#bottom-map').setAttribute('aria-label', ok ? `Bottom view: the ${NAME[D_COLOR(st)]} cross is complete` : `Bottom view: part of the ${NAME[D_COLOR(st)]} cross is out of place`);
+  }
   function paint() {
-    view3d.setState(S.cube, focusFor(S.flow));
+    view3d.setState(S.cube, focusFor(S.flow), keepFor(S.flow));
+    renderBottom();
     view3d.setSlot(S.flow && S.flow.kind === 'pair' ? slotOfPair(S.cube, S.flow.pair) : null);
     holdLine();
   }
@@ -2262,7 +2296,8 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     const ms = fast ? Math.min(180, S.settings.speed) : S.settings.speed;
     await view3d.turn(m, ms, () => {
       f.idx = to; S.cube = f.states[to];
-      view3d.setState(S.cube, focusFor(f));
+      view3d.setState(S.cube, focusFor(f), keepFor(f));
+      renderBottom();
     });
     holdLine(); saveCube();
     S.busy = false;
@@ -2298,7 +2333,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     S.busy = true;
     S.history.push(S.cube);
     const next = Cube.applyMove(S.cube, m);
-    await view3d.turn(m, Math.min(S.settings.speed, 300), () => { S.cube = next; view3d.setState(S.cube, null); });
+    await view3d.turn(m, Math.min(S.settings.speed, 300), () => { S.cube = next; view3d.setState(S.cube, null); renderBottom(); });
     S.busy = false;
     holdLine(); saveCube(); refreshPairs();
   }

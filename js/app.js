@@ -217,19 +217,21 @@
         this.anims.push({ ms, step, done });
       });
     }
-    // Paint tiles from a 54-color state; `focus` (sorted color keys) keeps those pieces in full
-    // color and turns the rest a quiet gray. Centers stay faintly tinted so faces stay readable.
-    setState(state, focus) {
+    // Paint tiles from a 54-color state. `focus` (sorted color keys) marks pieces in full color
+    // with dark frames; `keep` shows pieces in full color without frames (the white cross);
+    // the rest turn a quiet gray. Centers stay faintly tinted so faces stay readable.
+    setState(state, focus, keep) {
       const quiet = new THREE.Color('#c3c8d0');
       for (const c of this.cubies) {
         const meshes = c.obj.children.filter(m => m.userData.idx != null);
         const key = meshes.map(m => state[m.userData.idx]).sort().join('');
         const isCenter = meshes.length === 1;
-        const dim = focus && !focus.has(key);
-        const marked = !!focus && !dim && !isCenter;
+        const marked = !!focus && focus.has(key) && !isCenter;
+        const dim = !!focus && !marked && !(keep && keep.has(key)) && !(isCenter && keep);
         for (const m of meshes) {
           const col = new THREE.Color(HEX[state[m.userData.idx]]);
           if (dim) col.lerp(quiet, isCenter ? 0.5 : 0.94);
+          else if (focus && isCenter) col.lerp(quiet, 0.25);
           m.material.color.copy(col);
           m.userData.ring.visible = marked;
         }
@@ -530,8 +532,30 @@
     if (!flow) return null;
     return new Set(flow.focus);
   }
+  // The white cross stays in color while a pair is solved, so you can watch it leave and return.
+  function keepFor(flow) {
+    if (!flow || flow.kind !== 'pair') return null;
+    const st = flow.start;
+    return new Set(Cube.CROSS.map(e => e.faces.map(f => Cube.colorOf(st, f)).sort().join('')));
+  }
+  // The bottom face, drawn as if seen through the cube from above (front at the bottom),
+  // so the white cross can be watched while the cube is viewed from the top.
+  function renderBottom() {
+    const st = S.cube, host = $('#bm-grid');
+    if (!st || !host) return;
+    const D = Cube.FACES.indexOf('D') * 9;
+    let html = '';
+    for (let i = 0; i < 3; i++) for (let c = 0; c < 3; c++) html += `<i style="background:${HEX[st[D + (2 - i) * 3 + c]]}"></i>`;
+    host.innerHTML = html;
+    const ok = Cube.crossSolved(st);
+    const label = $('#bm-label');
+    label.textContent = ok ? 'Cross ✓' : 'Cross out';
+    label.className = 'bm-label ' + (ok ? 'ok' : 'out');
+    $('#bottom-map').setAttribute('aria-label', ok ? `Bottom view: the ${NAME[D_COLOR(st)]} cross is complete` : `Bottom view: part of the ${NAME[D_COLOR(st)]} cross is out of place`);
+  }
   function paint() {
-    view3d.setState(S.cube, focusFor(S.flow));
+    view3d.setState(S.cube, focusFor(S.flow), keepFor(S.flow));
+    renderBottom();
     view3d.setSlot(S.flow && S.flow.kind === 'pair' ? slotOfPair(S.cube, S.flow.pair) : null);
     holdLine();
   }
@@ -830,7 +854,8 @@
     const ms = fast ? Math.min(180, S.settings.speed) : S.settings.speed;
     await view3d.turn(m, ms, () => {
       f.idx = to; S.cube = f.states[to];
-      view3d.setState(S.cube, focusFor(f));
+      view3d.setState(S.cube, focusFor(f), keepFor(f));
+      renderBottom();
     });
     holdLine(); saveCube();
     S.busy = false;
@@ -866,7 +891,7 @@
     S.busy = true;
     S.history.push(S.cube);
     const next = Cube.applyMove(S.cube, m);
-    await view3d.turn(m, Math.min(S.settings.speed, 300), () => { S.cube = next; view3d.setState(S.cube, null); });
+    await view3d.turn(m, Math.min(S.settings.speed, 300), () => { S.cube = next; view3d.setState(S.cube, null); renderBottom(); });
     S.busy = false;
     holdLine(); saveCube(); refreshPairs();
   }
