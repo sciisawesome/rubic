@@ -2038,7 +2038,10 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       $('#vf-empty-text').textContent = this.problem
         ? 'Tap a side marked below to check its colors again.'
         : this.blocked
-          ? 'The Claude app doesn’t allow a live camera view here, so your camera opens for each side. Hold the cube straight on so one face fills most of the picture.'
+          ? (window.top !== window
+            ? 'The Claude app doesn’t allow a live camera view here, so your camera opens for each side.'
+            : 'Camera access is off, so your camera opens for each side instead. To get the live view, allow the camera for this site in your browser settings.')
+            + ' Hold the cube straight on so one face fills most of the picture.'
           : 'Hold the cube about 20 cm away, straight on.';
       $('#btn-capture-label').textContent = this.count() ? 'Capture next side' : 'Capture side';
       $('#vf-buttons').hidden = !this.blocked || !!this.problem;
