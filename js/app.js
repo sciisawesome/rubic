@@ -391,7 +391,7 @@
     $('#scanner').hidden = !scanning;
     $('#cube-ui').hidden = scanning;
     $('#scan-panel').hidden = !scanning;
-    ['#pairs-card', '#more-card'].forEach(id => { $(id).hidden = scanning; });
+    ['#pairs-card', '#guide-card', '#more-card'].forEach(id => { $(id).hidden = scanning; });
     $('#btn-newscan').hidden = scanning;
     $('#btn-cancelscan').hidden = !scanning || !S.cube;
     if (scanning) {
@@ -451,6 +451,26 @@
     if (!isTurn(m)) return moveText(m);
     const st = f.states[k + 1];
     return `Turn the cube so ${NAME[Cube.colorOf(st, 'F')]} faces you (${NAME[Cube.colorOf(st, 'U')]} stays on top)`;
+  }
+  // Why this move: what it does to the white cross (lift a side and a cross edge rides up;
+  // turn it back and the cross is put back), or that a top turn never touches it.
+  function stepWhy(f, k) {
+    const m = f.moves[k], before = f.states[k], after = f.states[k + 1];
+    if (isTurn(m)) return f.kind === 'pair' ? 'So the slot is at the front right. Your hands do the same moves every time.' : '';
+    const D = NAME[D_COLOR(after)];
+    const cb = Cube.trackCross(before), ca = Cube.trackCross(after);
+    const home = st => Cube.trackCross(st).every((x, i) => x === Cube.CROSS[i].st);
+    const okBefore = home(before), okAfter = home(after);
+    const base = Cube.MOVES[m].base;
+    if (base === 'U') return okBefore ? `Top only: the ${D} cross is never touched, so this is free.` : 'Top only: moves the pieces while the side is turned.';
+    if (f.kind === 'cross') return '';
+    const moved = Cube.CROSS.map((e, i) => i).filter(i => cb[i] !== ca[i]);
+    const edgeName = i => `${D}–${NAME[Cube.colorOf(after, Cube.CROSS[i].faces[1])]}`;
+    const side = FACE_WORD[base];
+    if (okBefore && !okAfter) return `Turns the ${side} side, so the ${moved.length ? edgeName(moved[0]) + ' cross edge' : D + ' cross'} moves out for now.`;
+    if (!okBefore && okAfter) return `Turns the ${side} side back, which puts the ${D} cross back.`;
+    if (!okBefore && !okAfter) return `Turns the ${side} side too; it gets turned back later.`;
+    return '';
   }
   const TURN_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg>';
 
@@ -662,7 +682,7 @@
       $('#flow-case').innerHTML = '<span class="spin"></span> Working out the quickest way…';
       $('#phases').innerHTML = ''; $('#opts').innerHTML = ''; $('#others').hidden = true;
       $('#cap-move').textContent = '…'; $('#cap-move').className = 'mv-big';
-      $('#cap-text').textContent = 'Working it out'; $('#cap-phase').textContent = ''; $('#cap-count').textContent = '';
+      $('#cap-text').textContent = 'Working it out'; $('#cap-phase').textContent = ''; $('#cap-count').textContent = ''; $('#cap-why').textContent = '';
       setControls();
       return;
     }
@@ -703,7 +723,18 @@
       li.innerHTML = `<span class="num">${state === 'done' ? '✓' : n + 1}</span><span class="ph-name">${info.name}${state === 'now' ? `<span class="ph-why">${info.why}</span>` : ''}</span>`;
       const row = document.createElement('div');
       row.className = 'moves';
-      for (let k = ph.from; k < ph.to; k++) row.appendChild(moveChip(k));
+      // "side, top, side back" triggers are boxed so the pattern stands out
+      for (let k = ph.from; k < ph.to;) {
+        const m = f.moves;
+        const trig = k + 2 < ph.to && !isTurn(m[k]) && Cube.MOVES[m[k]].base !== 'U' && Cube.MOVES[m[k + 1]].base === 'U' && m[k + 2] === Cube.invertMove(m[k]);
+        if (trig) {
+          const box = document.createElement('span');
+          box.className = 'trig';
+          box.title = 'Trigger: side up, top, side back';
+          for (let j = k; j < k + 3; j++) box.appendChild(moveChip(j));
+          row.appendChild(box); k += 3;
+        } else { row.appendChild(moveChip(k)); k++; }
+      }
       li.appendChild(row);
       host.appendChild(li);
     });
@@ -768,11 +799,13 @@
       if (isTurn(next)) { capMove.innerHTML = TURN_ICON; capMove.className = 'mv-big rot'; }
       else { capMove.textContent = next; capMove.className = 'mv-big'; }
       $('#cap-text').textContent = stepText(f, f.idx);
+      $('#cap-why').textContent = stepWhy(f, f.idx);
       $('#cap-phase').innerHTML = event ? `<span class="event">${event}</span>` : PHASE[ph.key].name;
       $('#cap-count').textContent = `${f.idx + 1} of ${n}`;
     } else {
       capMove.textContent = '✓'; capMove.className = 'mv-big fin';
       $('#cap-text').textContent = f.kind === 'pair' ? 'Pair inserted' : 'Cross done';
+      $('#cap-why').textContent = f.kind === 'pair' ? `The ${NAME[D_COLOR(S.cube)]} cross is complete and the slot is filled.` : 'Now the pairs can go in.';
       $('#cap-phase').innerHTML = `<span class="event">${n} moves</span>`;
       $('#cap-count').textContent = '';
     }

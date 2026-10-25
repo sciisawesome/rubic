@@ -28,7 +28,7 @@
   --r-tile: 12px;
   --shadow: 0 1px 2px rgba(18,19,24,.05), 0 8px 24px rgba(18,19,24,.07);
 }
-html, body { height: 100%; }
+html, body { min-height: 100%; }
 body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font); -webkit-tap-highlight-color: transparent; -webkit-font-smoothing: antialiased; }
 * { box-sizing: border-box; }
 button, input, select { font: inherit; color: inherit; }
@@ -104,6 +104,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .cap-line .event { color: var(--good); font-weight: 600; }
 .cap-line .count { font-family: var(--mono); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .cap-text { font-size: 16px; font-weight: 600; line-height: 1.25; color: var(--ink); }
+.cap-why { font-size: 12.5px; line-height: 1.35; color: var(--ink-2); min-height: 2.7em; margin-top: 2px; }
 .ctl { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 8px; }
 .ctl .btn { height: 48px; padding: 0 14px; }
 .ctl .btn.icon { padding: 0; }
@@ -189,6 +190,10 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .mv:hover { background: var(--soft-2); }
 .mv.done { color: #a2a7b3; background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
 .mv.now { background: var(--accent); color: #fff; }
+.trig { display: inline-flex; gap: 4px; padding: 3px; border-radius: 12px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px #dcdffb; }
+.trig .mv { background: #fff; }
+.trig .mv.done { background: transparent; box-shadow: none; }
+.trig .mv.now { background: var(--accent); }
 .mv.turn { font-family: var(--font); font-size: 13.5px; font-weight: 600; display: inline-flex; gap: 6px; align-items: center; padding: 0 11px; }
 .others summary { font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
 .opts { display: grid; gap: 6px; margin-top: 10px; }
@@ -197,6 +202,14 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .opt .n { font-size: 12px; color: var(--muted); white-space: nowrap; line-height: 1.3; min-width: 64px; }
 .alg { font-family: var(--mono); font-size: 14px; font-weight: 600; word-break: break-word; }
+
+/* Patterns guide */
+.guide-list { margin: 0; padding: 12px 0 0 20px; display: grid; gap: 12px; border-top: 1px solid var(--line); }
+.guide-list li { font-size: 14px; }
+.guide-list li::marker { color: var(--muted); font-weight: 600; }
+.guide-list b { font-weight: 600; }
+.guide-list p { color: var(--ink-2); font-size: 13.5px; margin-top: 3px; }
+.guide-list .alg { display: inline-block; font-size: 12.5px; background: var(--soft); border-radius: 6px; padding: 1px 6px; margin: 1px 2px 0 0; }
 
 /* More */
 details summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center; }
@@ -291,6 +304,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
             <div class="cap-body">
               <div class="cap-line"><span id="cap-phase"></span><span class="count" id="cap-count"></span></div>
               <div class="cap-text" id="cap-text"></div>
+              <div class="cap-why" id="cap-why"></div>
             </div>
           </div>
           <div class="ctl">
@@ -328,6 +342,23 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       <ol class="phases" id="phases"></ol>
       <details class="others" id="others"><summary>Other ways to solve it</summary><div class="opts" id="opts"></div></details>
     </div>
+    <details class="card guide" id="guide-card" hidden>
+      <summary>Patterns to know</summary>
+      <ol class="guide-list">
+        <li><b>The trigger: side up, top, side back.</b> <span class="alg">R U R'</span> <span class="alg">R U' R'</span> <span class="alg">F' U' F</span>
+          <p>Turning a side takes one white cross edge out of place. Turning the top moves the pieces. Turning the side back puts the cross back. Almost every F2L solution is built from these; they're the boxed groups in each solution.</p></li>
+        <li><b>Top turns are free.</b> <span class="alg">U</span> <span class="alg">U'</span> <span class="alg">U2</span>
+          <p>The top layer never touches the cross or the bottom, so use it to line pieces up before a trigger.</p></li>
+        <li><b>Pair up, then insert.</b>
+          <p>First join the corner and its edge into one 1×2 block on top (the step marked "joined"). Then a single trigger drops the block into its slot.</p></li>
+        <li><b>Two ways into the front-right slot.</b> From the right <span class="alg">R U R'</span>, from the front <span class="alg">F' U' F</span>.
+          <p>Which one depends on where the block sits; the app picks the shorter.</p></li>
+        <li><b>Stuck pieces come out first.</b>
+          <p>If the corner or edge is in the wrong slot, a trigger on that slot lifts it to the top. Then it's an ordinary case.</p></li>
+        <li><b>Same spot, same hands.</b>
+          <p>Turning the whole cube so the slot is at the front right means you practice the same few moves over and over, which is how they become automatic.</p></li>
+      </ol>
+    </details>
     <details class="card" id="more-card" hidden>
       <summary>More</summary>
       <div class="more-sec">
