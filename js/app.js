@@ -468,6 +468,7 @@
     const moved = Cube.CROSS.map((e, i) => i).filter(i => cb[i] !== ca[i]);
     const edgeName = i => `${D}–${NAME[Cube.colorOf(after, Cube.CROSS[i].faces[1])]}`;
     const side = FACE_WORD[base];
+    if (base === 'D') return okBefore && !okAfter ? 'Turns the bottom, so the whole cross is turned out of line for now.' : !okBefore && okAfter ? 'Turns the bottom back, which lines the cross up again.' : 'Turns the bottom; it gets turned back later.';
     if (okBefore && !okAfter) return `Turns the ${side} side, so the ${moved.length ? edgeName(moved[0]) + ' cross edge' : D + ' cross'} moves out for now.`;
     if (!okBefore && okAfter) return `Turns the ${side} side back, which puts the ${D} cross back.`;
     if (!okBefore && !okAfter) return `Turns the ${side} side too; it gets turned back later.`;
@@ -594,6 +595,7 @@
       const r = await Solver.call({ op: 'pair', state: st, slot: p.slot, mode: S.settings.rotate ? 'rotate' : 'inplace' });
       if (v !== S.pairsVersion) return;
       p.len = r.solutions && r.solutions.length ? r.solutions[0].len : r.optimal;
+      p.fewest = r.fewest ? r.fewest.len : null;
       renderPairs(list, crossOk);
     }
     setControls();
@@ -618,9 +620,9 @@
       if (p.solved) meta = 'Done';
       else if (!crossOk) meta = 'After the cross';
       else if (p.len == null) meta = '<span class="spin"></span>';
-      else meta = `<b>${p.len} moves</b>${best && best.key === p.key && open.length > 1 ? '<span class="badge">Fastest</span>' : ''}`;
-      b.innerHTML = `${slotMap(p.slot, p.solved)}<span class="nm">${chip(p.pair[0])}${chip(p.pair[1])} ${pairName(p.pair)}</span><span class="meta">${meta}</span>`;
-      b.setAttribute('aria-label', `${pairName(p.pair)} pair, ${SLOT_WORD[p.slot]} slot, ${p.solved ? 'done' : p.len != null ? p.len + ' moves' : ''}`);
+      else meta = `<b>${p.len} moves</b>${p.fewest != null && p.fewest < p.len ? `<span class="fewest">fewest ${p.fewest}</span>` : ''}${best && best.key === p.key && open.length > 1 ? '<span class="badge">Fastest</span>' : ''}`;
+      b.innerHTML = `${slotMap(p.slot, p.solved)}<span class="txt"><span class="nm">${chip(p.pair[0])}${chip(p.pair[1])} ${pairName(p.pair)}</span><span class="meta">${meta}</span></span>`;
+      b.setAttribute('aria-label', `${pairName(p.pair)} pair, ${SLOT_WORD[p.slot]} slot, ${p.solved ? 'done' : p.len != null ? p.len + ' moves' + (p.fewest != null && p.fewest < p.len ? `, fewest possible ${p.fewest}` : '') : ''}`);
       b.disabled = !crossOk && !p.solved;
       b.addEventListener('click', () => { if (!p.solved) startPair(p.pair); else toast('That pair is already in place.'); });
       host.appendChild(b);
@@ -647,7 +649,14 @@
     flow.loading = false;
     if (!r.solutions || !r.solutions.length) { toast('No solution found for this pair. Check the colors.'); closeFlow(); return; }
     flow.rotation = r.rotation || '';
-    flow.solutions = r.solutions;
+    flow.solutions = r.solutions.slice();
+    // the true fewest-moves solution sits beside the recommended one
+    flow.fewestIdx = -1;
+    if (r.fewest) {
+      const key = r.fewest.moves.join(' ');
+      flow.fewestIdx = flow.solutions.findIndex(x => x.moves.join(' ') === key);
+      if (flow.fewestIdx < 0) { flow.solutions.push(r.fewest); flow.fewestIdx = flow.solutions.length - 1; }
+    }
     selectSolution(0);
     if (window.innerWidth < 900) {
       const pinned = $('.stage-wrap').getBoundingClientRect().bottom;
@@ -668,7 +677,7 @@
     renderFlow(); paint();
     const r = await Solver.call({ op: 'cross', state: st });
     if (S.flow !== flow) return;
-    flow.loading = false; flow.solutions = r.solutions;
+    flow.loading = false; flow.solutions = r.solutions; flow.fewestIdx = -1;
     selectSolution(0);
   }
   function selectSolution(i) {
@@ -716,8 +725,29 @@
     $('#flow-case').textContent = f.kind === 'pair'
       ? caseLine(caseState, f.pair)
       : `${Cube.trackCross(f.start).filter((x, k) => x === Cube.CROSS[k].st).length} of 4 edges are already home.`;
-    // other ways: the shortest one and one more, tucked away
+    f.lockShown = f.idx > 0;
+    // two ways up front: the one easiest to learn and the true fewest moves
     const sols = f.solutions;
+    const sw = $('#solve-switch'), note = $('#fewest-note');
+    const fewest = f.fewestIdx >= 0 ? sols[f.fewestIdx] : null;
+    const twoWays = f.kind === 'pair' && fewest && fewest.len < sols[0].len;
+    sw.hidden = !twoWays;
+    note.hidden = !(f.kind === 'pair' && fewest && !twoWays);
+    if (fewest && !twoWays) note.textContent = `This is also the fewest moves possible (${sols[0].len}).`;
+    if (twoWays) {
+      sw.innerHTML = '';
+      [[0, 'Easiest to learn', sols[0].len], [f.fewestIdx, 'Fewest moves', fewest.len]].forEach(([i, name, len]) => {
+        const b = document.createElement('button');
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(f.sel === i));
+        b.innerHTML = `<span>${name}</span><b>${len}</b>`;
+        b.disabled = f.idx > 0 && f.sel !== i;
+        b.title = f.idx > 0 && f.sel !== i ? 'Go back to the first move to switch' : '';
+        b.addEventListener('click', () => { if (!S.busy && f.sel !== i && f.idx === 0) { stopPlay(); selectSolution(i); } });
+        sw.appendChild(b);
+      });
+    }
+    // other ways: the shortest one and one more, tucked away
     const shortest = sols.reduce((a, x) => (x.len < a.len ? x : a), sols[0]);
     let shown = sols.slice(0, 3);
     if (!shown.includes(shortest)) shown = [sols[0], sols[1], shortest];
@@ -734,7 +764,7 @@
       const b = document.createElement('button');
       b.className = 'opt';
       b.setAttribute('aria-pressed', String(i === f.sel));
-      const tag = i === 0 ? 'Recommended' : s === shortest && s.len < sols[0].len ? 'Shortest' : 'Also good';
+      const tag = i === 0 ? 'Easiest to learn' : i === f.fewestIdx ? 'Fewest moves' : s === shortest && s.len < sols[0].len ? 'Shortest' : 'Also good';
       b.innerHTML = `<span class="n">${s.len} moves<br>${tag}</span><span class="alg">${s.moves.join(' ')}</span>`;
       b.disabled = f.idx > 0 && f.sel !== i;
       b.addEventListener('click', () => { if (!S.busy && f.sel !== i && f.idx === 0) { stopPlay(); selectSolution(i); } });
@@ -743,11 +773,11 @@
     renderPhases();
     setControls();
   }
+  // the solution choices lock once the first move is made; re-render only when that flips
   function renderOptionsLock() {
     const f = S.flow;
-    if (!f || !f.solutions || $('#others').hidden) return;
-    const locked = f.idx > 0;
-    if ((!!$('#opts p')) !== locked) renderFlow();
+    if (!f || !f.solutions) return;
+    if (f.lockShown !== (f.idx > 0)) renderFlow();
   }
   function phaseAt(f, i) { return f.phases.find(p => i >= p.from && i < p.to) || f.phases[f.phases.length - 1]; }
   function renderPhases() {

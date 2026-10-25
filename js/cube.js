@@ -419,12 +419,14 @@
     const fr = SLOTS.FR;
     TABLES = {
       cross18: buildTable(['e', 'e', 'e', 'e'], crossGoal, MT_CROSS),
-      crossC: buildTable(['e', 'e', 'e', 'e', 'c'], crossGoal.concat(CIDX[fr.corner]), MT_F2L),
-      crossE: buildTable(['e', 'e', 'e', 'e', 'e'], crossGoal.concat(EIDX[fr.edge]), MT_F2L),
+      // lower bounds counted over all 18 face turns, so they are valid for both the learner
+      // search (no bottom turns) and the fewest-moves search (every face)
+      crossC: buildTable(['e', 'e', 'e', 'e', 'c'], crossGoal.concat(CIDX[fr.corner]), MT_CROSS),
+      crossE: buildTable(['e', 'e', 'e', 'e', 'e'], crossGoal.concat(EIDX[fr.edge]), MT_CROSS),
       pair: {},
     };
     for (const name in SLOTS) {
-      TABLES.pair[name] = buildTable(['c', 'e'], [CIDX[SLOTS[name].corner], EIDX[SLOTS[name].edge]], MT_F2L);
+      TABLES.pair[name] = buildTable(['c', 'e'], [CIDX[SLOTS[name].corner], EIDX[SLOTS[name].edge]], MT_CROSS);
     }
     return TABLES;
   }
@@ -512,7 +514,8 @@
       for (let k = 0; k < keep.length; k++) { o[6 + 2 * k] = m.c[st[6 + 2 * k]]; o[7 + 2 * k] = m.e[st[7 + 2 * k]]; }
       return o;
     };
-    const r = idaSearch(start, MT_F2L, h, isGoal, apply, { extra: opts.extra == null ? 2 : opts.extra, limit: 600, maxDepth: 16 });
+    // opts.all: every face turn (true fewest moves); otherwise no bottom turns (the usual F2L hand)
+    const r = idaSearch(start, opts.all ? MT_CROSS : MT_F2L, h, isGoal, apply, { extra: opts.extra == null ? 2 : opts.extra, limit: opts.all ? 200 : 600, maxDepth: 16 });
     return rank(r);
   }
   function rank(r) {
@@ -539,9 +542,14 @@
     // Slot names of solved pairs in the rotated frame.
     const keep = solvedSlots.map(n => renameSlot(n, pre));
     const res = solveFRPair(framed, { keep });
+    // the true minimum over every face turn, bottom turns included
+    const fewest = solveFRPair(framed, { keep, all: true, extra: 0 });
+    res.fewest = fewest.solutions[0] || null;
+    res.fewestLen = fewest.optimal;
     if (mode === 'inplace' && pre) {
       res.solutions.forEach(s => { s.moves = s.moves.map(m => conjugate(m, pre)); s.cost = algCost(s.moves) + (s.len - res.optimal) * 0.8; });
       res.solutions.sort((a, b) => a.cost - b.cost || a.len - b.len);
+      if (res.fewest) res.fewest = { ...res.fewest, moves: res.fewest.moves.map(m => conjugate(m, pre)) };
       res.rotation = '';
     } else res.rotation = pre;
     return res;

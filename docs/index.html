@@ -168,13 +168,14 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 
 /* Pair picker */
 .pairs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.pair { border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--bg); padding: 10px 12px; text-align: left; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 56px; transition: background-color .15s, border-color .15s; }
+.pair { border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--bg); padding: 10px 12px; text-align: left; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; min-height: 58px; transition: background-color .15s, border-color .15s; }
 .pair:hover { background: var(--soft); }
 .pair:disabled { cursor: default; opacity: .45; }
 .pair[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .pair .map { width: 30px; height: 30px; }
 .pair .nm { display: flex; gap: 5px; align-items: center; font-weight: 600; font-size: 14px; min-width: 0; }
-.pair .meta { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.pair .txt { display: grid; gap: 2px; min-width: 0; }
+.pair .meta { font-size: 12.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .pair .meta b { color: var(--ink); font-weight: 600; }
 .pair.solved { background: var(--soft); border-color: transparent; }
 .pair.solved .nm { color: var(--muted); }
@@ -183,6 +184,12 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 
 /* The chosen pair: what the case is, then the solution in named phases */
 .case { font-size: 14px; color: var(--ink-2); }
+.switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--soft); border-radius: 12px; }
+.switch button { border: 0; background: none; border-radius: 9px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.switch button b { font-family: var(--mono); font-size: 14px; }
+.switch button[aria-checked="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 1px 3px rgba(18,19,24,.12); }
+.switch button:disabled { opacity: .45; cursor: default; }
+.pair .meta .fewest { color: var(--muted); font-weight: 500; }
 .phases { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .phase { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); }
 .phase:first-child { border-top: 0; padding-top: 2px; }
@@ -348,6 +355,8 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     <div class="card" id="flow-card" hidden>
       <div class="card-head"><h3 id="flow-title"></h3><button class="icon-btn plain" id="btn-close-flow" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
       <p class="case" id="flow-case"></p>
+      <div class="switch" id="solve-switch" role="radiogroup" aria-label="Which solution" hidden></div>
+      <p class="small muted" id="fewest-note" hidden></p>
       <ol class="phases" id="phases"></ol>
       <details class="others" id="others"><summary>Other ways to solve it</summary><div class="opts" id="opts"></div></details>
     </div>
@@ -833,12 +842,14 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     const fr = SLOTS.FR;
     TABLES = {
       cross18: buildTable(['e', 'e', 'e', 'e'], crossGoal, MT_CROSS),
-      crossC: buildTable(['e', 'e', 'e', 'e', 'c'], crossGoal.concat(CIDX[fr.corner]), MT_F2L),
-      crossE: buildTable(['e', 'e', 'e', 'e', 'e'], crossGoal.concat(EIDX[fr.edge]), MT_F2L),
+      // lower bounds counted over all 18 face turns, so they are valid for both the learner
+      // search (no bottom turns) and the fewest-moves search (every face)
+      crossC: buildTable(['e', 'e', 'e', 'e', 'c'], crossGoal.concat(CIDX[fr.corner]), MT_CROSS),
+      crossE: buildTable(['e', 'e', 'e', 'e', 'e'], crossGoal.concat(EIDX[fr.edge]), MT_CROSS),
       pair: {},
     };
     for (const name in SLOTS) {
-      TABLES.pair[name] = buildTable(['c', 'e'], [CIDX[SLOTS[name].corner], EIDX[SLOTS[name].edge]], MT_F2L);
+      TABLES.pair[name] = buildTable(['c', 'e'], [CIDX[SLOTS[name].corner], EIDX[SLOTS[name].edge]], MT_CROSS);
     }
     return TABLES;
   }
@@ -926,7 +937,8 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       for (let k = 0; k < keep.length; k++) { o[6 + 2 * k] = m.c[st[6 + 2 * k]]; o[7 + 2 * k] = m.e[st[7 + 2 * k]]; }
       return o;
     };
-    const r = idaSearch(start, MT_F2L, h, isGoal, apply, { extra: opts.extra == null ? 2 : opts.extra, limit: 600, maxDepth: 16 });
+    // opts.all: every face turn (true fewest moves); otherwise no bottom turns (the usual F2L hand)
+    const r = idaSearch(start, opts.all ? MT_CROSS : MT_F2L, h, isGoal, apply, { extra: opts.extra == null ? 2 : opts.extra, limit: opts.all ? 200 : 600, maxDepth: 16 });
     return rank(r);
   }
   function rank(r) {
@@ -953,9 +965,14 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     // Slot names of solved pairs in the rotated frame.
     const keep = solvedSlots.map(n => renameSlot(n, pre));
     const res = solveFRPair(framed, { keep });
+    // the true minimum over every face turn, bottom turns included
+    const fewest = solveFRPair(framed, { keep, all: true, extra: 0 });
+    res.fewest = fewest.solutions[0] || null;
+    res.fewestLen = fewest.optimal;
     if (mode === 'inplace' && pre) {
       res.solutions.forEach(s => { s.moves = s.moves.map(m => conjugate(m, pre)); s.cost = algCost(s.moves) + (s.len - res.optimal) * 0.8; });
       res.solutions.sort((a, b) => a.cost - b.cost || a.len - b.len);
+      if (res.fewest) res.fewest = { ...res.fewest, moves: res.fewest.moves.map(m => conjugate(m, pre)) };
       res.rotation = '';
     } else res.rotation = pre;
     return res;
@@ -1434,7 +1451,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
   const STD_LAYOUT = ['Y', 'O', 'G', 'W', 'R', 'B']; // U R F D L B of a standard-scheme cube
   const FACE_WORD = { U: 'top', D: 'bottom', F: 'front', B: 'back', R: 'right', L: 'left' };
   const ACCENT = 0x4f46e5;
-  const APP_VERSION = '25 Oct, 13:23';   // stamped by build-single.mjs
+  const APP_VERSION = '25 Oct, 13:44';   // stamped by build-single.mjs
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   const chip = c => `<span class="chip" style="background:${HEX[c]}"></span>`;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1893,6 +1910,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     const moved = Cube.CROSS.map((e, i) => i).filter(i => cb[i] !== ca[i]);
     const edgeName = i => `${D}–${NAME[Cube.colorOf(after, Cube.CROSS[i].faces[1])]}`;
     const side = FACE_WORD[base];
+    if (base === 'D') return okBefore && !okAfter ? 'Turns the bottom, so the whole cross is turned out of line for now.' : !okBefore && okAfter ? 'Turns the bottom back, which lines the cross up again.' : 'Turns the bottom; it gets turned back later.';
     if (okBefore && !okAfter) return `Turns the ${side} side, so the ${moved.length ? edgeName(moved[0]) + ' cross edge' : D + ' cross'} moves out for now.`;
     if (!okBefore && okAfter) return `Turns the ${side} side back, which puts the ${D} cross back.`;
     if (!okBefore && !okAfter) return `Turns the ${side} side too; it gets turned back later.`;
@@ -2019,6 +2037,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       const r = await Solver.call({ op: 'pair', state: st, slot: p.slot, mode: S.settings.rotate ? 'rotate' : 'inplace' });
       if (v !== S.pairsVersion) return;
       p.len = r.solutions && r.solutions.length ? r.solutions[0].len : r.optimal;
+      p.fewest = r.fewest ? r.fewest.len : null;
       renderPairs(list, crossOk);
     }
     setControls();
@@ -2043,9 +2062,9 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       if (p.solved) meta = 'Done';
       else if (!crossOk) meta = 'After the cross';
       else if (p.len == null) meta = '<span class="spin"></span>';
-      else meta = `<b>${p.len} moves</b>${best && best.key === p.key && open.length > 1 ? '<span class="badge">Fastest</span>' : ''}`;
-      b.innerHTML = `${slotMap(p.slot, p.solved)}<span class="nm">${chip(p.pair[0])}${chip(p.pair[1])} ${pairName(p.pair)}</span><span class="meta">${meta}</span>`;
-      b.setAttribute('aria-label', `${pairName(p.pair)} pair, ${SLOT_WORD[p.slot]} slot, ${p.solved ? 'done' : p.len != null ? p.len + ' moves' : ''}`);
+      else meta = `<b>${p.len} moves</b>${p.fewest != null && p.fewest < p.len ? `<span class="fewest">fewest ${p.fewest}</span>` : ''}${best && best.key === p.key && open.length > 1 ? '<span class="badge">Fastest</span>' : ''}`;
+      b.innerHTML = `${slotMap(p.slot, p.solved)}<span class="txt"><span class="nm">${chip(p.pair[0])}${chip(p.pair[1])} ${pairName(p.pair)}</span><span class="meta">${meta}</span></span>`;
+      b.setAttribute('aria-label', `${pairName(p.pair)} pair, ${SLOT_WORD[p.slot]} slot, ${p.solved ? 'done' : p.len != null ? p.len + ' moves' + (p.fewest != null && p.fewest < p.len ? `, fewest possible ${p.fewest}` : '') : ''}`);
       b.disabled = !crossOk && !p.solved;
       b.addEventListener('click', () => { if (!p.solved) startPair(p.pair); else toast('That pair is already in place.'); });
       host.appendChild(b);
@@ -2072,7 +2091,14 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     flow.loading = false;
     if (!r.solutions || !r.solutions.length) { toast('No solution found for this pair. Check the colors.'); closeFlow(); return; }
     flow.rotation = r.rotation || '';
-    flow.solutions = r.solutions;
+    flow.solutions = r.solutions.slice();
+    // the true fewest-moves solution sits beside the recommended one
+    flow.fewestIdx = -1;
+    if (r.fewest) {
+      const key = r.fewest.moves.join(' ');
+      flow.fewestIdx = flow.solutions.findIndex(x => x.moves.join(' ') === key);
+      if (flow.fewestIdx < 0) { flow.solutions.push(r.fewest); flow.fewestIdx = flow.solutions.length - 1; }
+    }
     selectSolution(0);
     if (window.innerWidth < 900) {
       const pinned = $('.stage-wrap').getBoundingClientRect().bottom;
@@ -2093,7 +2119,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     renderFlow(); paint();
     const r = await Solver.call({ op: 'cross', state: st });
     if (S.flow !== flow) return;
-    flow.loading = false; flow.solutions = r.solutions;
+    flow.loading = false; flow.solutions = r.solutions; flow.fewestIdx = -1;
     selectSolution(0);
   }
   function selectSolution(i) {
@@ -2141,8 +2167,29 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     $('#flow-case').textContent = f.kind === 'pair'
       ? caseLine(caseState, f.pair)
       : `${Cube.trackCross(f.start).filter((x, k) => x === Cube.CROSS[k].st).length} of 4 edges are already home.`;
-    // other ways: the shortest one and one more, tucked away
+    f.lockShown = f.idx > 0;
+    // two ways up front: the one easiest to learn and the true fewest moves
     const sols = f.solutions;
+    const sw = $('#solve-switch'), note = $('#fewest-note');
+    const fewest = f.fewestIdx >= 0 ? sols[f.fewestIdx] : null;
+    const twoWays = f.kind === 'pair' && fewest && fewest.len < sols[0].len;
+    sw.hidden = !twoWays;
+    note.hidden = !(f.kind === 'pair' && fewest && !twoWays);
+    if (fewest && !twoWays) note.textContent = `This is also the fewest moves possible (${sols[0].len}).`;
+    if (twoWays) {
+      sw.innerHTML = '';
+      [[0, 'Easiest to learn', sols[0].len], [f.fewestIdx, 'Fewest moves', fewest.len]].forEach(([i, name, len]) => {
+        const b = document.createElement('button');
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(f.sel === i));
+        b.innerHTML = `<span>${name}</span><b>${len}</b>`;
+        b.disabled = f.idx > 0 && f.sel !== i;
+        b.title = f.idx > 0 && f.sel !== i ? 'Go back to the first move to switch' : '';
+        b.addEventListener('click', () => { if (!S.busy && f.sel !== i && f.idx === 0) { stopPlay(); selectSolution(i); } });
+        sw.appendChild(b);
+      });
+    }
+    // other ways: the shortest one and one more, tucked away
     const shortest = sols.reduce((a, x) => (x.len < a.len ? x : a), sols[0]);
     let shown = sols.slice(0, 3);
     if (!shown.includes(shortest)) shown = [sols[0], sols[1], shortest];
@@ -2159,7 +2206,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       const b = document.createElement('button');
       b.className = 'opt';
       b.setAttribute('aria-pressed', String(i === f.sel));
-      const tag = i === 0 ? 'Recommended' : s === shortest && s.len < sols[0].len ? 'Shortest' : 'Also good';
+      const tag = i === 0 ? 'Easiest to learn' : i === f.fewestIdx ? 'Fewest moves' : s === shortest && s.len < sols[0].len ? 'Shortest' : 'Also good';
       b.innerHTML = `<span class="n">${s.len} moves<br>${tag}</span><span class="alg">${s.moves.join(' ')}</span>`;
       b.disabled = f.idx > 0 && f.sel !== i;
       b.addEventListener('click', () => { if (!S.busy && f.sel !== i && f.idx === 0) { stopPlay(); selectSolution(i); } });
@@ -2168,11 +2215,11 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     renderPhases();
     setControls();
   }
+  // the solution choices lock once the first move is made; re-render only when that flips
   function renderOptionsLock() {
     const f = S.flow;
-    if (!f || !f.solutions || $('#others').hidden) return;
-    const locked = f.idx > 0;
-    if ((!!$('#opts p')) !== locked) renderFlow();
+    if (!f || !f.solutions) return;
+    if (f.lockShown !== (f.idx > 0)) renderFlow();
   }
   function phaseAt(f, i) { return f.phases.find(p => i >= p.from && i < p.to) || f.phases[f.phases.length - 1]; }
   function renderPhases() {

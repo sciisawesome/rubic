@@ -168,13 +168,14 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 
 /* Pair picker */
 .pairs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.pair { border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--bg); padding: 10px 12px; text-align: left; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 56px; transition: background-color .15s, border-color .15s; }
+.pair { border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--bg); padding: 10px 12px; text-align: left; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; min-height: 58px; transition: background-color .15s, border-color .15s; }
 .pair:hover { background: var(--soft); }
 .pair:disabled { cursor: default; opacity: .45; }
 .pair[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .pair .map { width: 30px; height: 30px; }
 .pair .nm { display: flex; gap: 5px; align-items: center; font-weight: 600; font-size: 14px; min-width: 0; }
-.pair .meta { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.pair .txt { display: grid; gap: 2px; min-width: 0; }
+.pair .meta { font-size: 12.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .pair .meta b { color: var(--ink); font-weight: 600; }
 .pair.solved { background: var(--soft); border-color: transparent; }
 .pair.solved .nm { color: var(--muted); }
@@ -183,6 +184,12 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 
 /* The chosen pair: what the case is, then the solution in named phases */
 .case { font-size: 14px; color: var(--ink-2); }
+.switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--soft); border-radius: 12px; }
+.switch button { border: 0; background: none; border-radius: 9px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.switch button b { font-family: var(--mono); font-size: 14px; }
+.switch button[aria-checked="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 1px 3px rgba(18,19,24,.12); }
+.switch button:disabled { opacity: .45; cursor: default; }
+.pair .meta .fewest { color: var(--muted); font-weight: 500; }
 .phases { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .phase { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); }
 .phase:first-child { border-top: 0; padding-top: 2px; }
@@ -348,6 +355,8 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     <div class="card" id="flow-card" hidden>
       <div class="card-head"><h3 id="flow-title"></h3><button class="icon-btn plain" id="btn-close-flow" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
       <p class="case" id="flow-case"></p>
+      <div class="switch" id="solve-switch" role="radiogroup" aria-label="Which solution" hidden></div>
+      <p class="small muted" id="fewest-note" hidden></p>
       <ol class="phases" id="phases"></ol>
       <details class="others" id="others"><summary>Other ways to solve it</summary><div class="opts" id="opts"></div></details>
     </div>
