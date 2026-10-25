@@ -56,13 +56,6 @@
   })();
 
   // ---------- 3D cube ----------
-  function roundedShape(w, r) {
-    const s = new THREE.Shape(), h = w / 2;
-    s.moveTo(-h + r, -h); s.lineTo(h - r, -h); s.quadraticCurveTo(h, -h, h, -h + r);
-    s.lineTo(h, h - r); s.quadraticCurveTo(h, h, h - r, h); s.lineTo(-h + r, h);
-    s.quadraticCurveTo(-h, h, -h, h - r); s.lineTo(-h, -h + r); s.quadraticCurveTo(-h, -h, -h + r, -h);
-    return s;
-  }
   // Rounded square with its own radius per corner: [top-left, top-right, bottom-right, bottom-left].
   function cornerShape(w, rr, path) {
     const s = path || new THREE.Shape(), h = w / 2, [tl, tr, br, bl] = rr;
@@ -464,8 +457,14 @@
     const home = st => Cube.trackCross(st).every((x, i) => x === Cube.CROSS[i].st);
     const okBefore = home(before), okAfter = home(after);
     const base = Cube.MOVES[m].base;
+    if (f.kind === 'cross') {
+      const now = Cube.CROSS.map((e, i) => i).filter(i => ca[i] === Cube.CROSS[i].st && cb[i] !== Cube.CROSS[i].st);
+      if (now.length) return `Puts the ${D}–${NAME[Cube.colorOf(after, Cube.CROSS[now[0]].faces[1])]} edge home, under its center.`;
+      if (base === 'U') return 'Top only: lines an edge up above the spot it belongs in.';
+      if (base === 'D') return 'Turns the bottom so the edges there line up with their centers.';
+      return 'Moves an edge closer to its spot.';
+    }
     if (base === 'U') return okBefore ? `Top only: the ${D} cross is never touched, so this is free.` : 'Top only: moves the pieces while the side is turned.';
-    if (f.kind === 'cross') return '';
     const moved = Cube.CROSS.map((e, i) => i).filter(i => cb[i] !== ca[i]);
     const edgeName = i => `${D}–${NAME[Cube.colorOf(after, Cube.CROSS[i].faces[1])]}`;
     const side = FACE_WORD[base];
@@ -650,7 +649,11 @@
     flow.rotation = r.rotation || '';
     flow.solutions = r.solutions;
     selectSolution(0);
-    if (window.innerWidth < 900) $('#flow-card').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (window.innerWidth < 900) {
+      const pinned = $('.stage-wrap').getBoundingClientRect().bottom;
+      const top = $('#flow-card').getBoundingClientRect().top + window.scrollY - pinned - 8;
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    }
   }
   async function startCross() {
     if (S.busy) return;
@@ -661,6 +664,7 @@
       focus: Cube.CROSS.map(e => e.faces.map(f => Cube.colorOf(st, f)).sort().join('')),
       start: st, solutions: null, loading: true, rotation: '',
     };
+    $('#cross-card').hidden = true;
     renderFlow(); paint();
     const r = await Solver.call({ op: 'cross', state: st });
     if (S.flow !== flow) return;
@@ -669,7 +673,6 @@
   }
   function selectSolution(i) {
     const f = S.flow;
-    const restarting = f.idx > 0;
     f.sel = i;
     f.moves = (f.rotation ? [f.rotation] : []).concat(f.solutions[i].moves);
     f.states = [f.start];
@@ -677,7 +680,6 @@
     f.phases = phasesFor(f);
     f.idx = 0;
     S.cube = f.start; saveCube();
-    if (restarting) toast('Back to the start of this pair');
     paint(); renderFlow(); afterStep();
   }
   function closeFlow() {
@@ -721,6 +723,12 @@
     if (!shown.includes(shortest)) shown = [sols[0], sols[1], shortest];
     $('#others').hidden = shown.length < 2;
     $('#opts').innerHTML = '';
+    if (f.idx > 0) {
+      const note = document.createElement('p');
+      note.className = 'small muted';
+      note.textContent = 'To switch, go back to the first move (tap it in the steps above) so your cube matches.';
+      $('#opts').appendChild(note);
+    }
     shown.forEach(s => {
       const i = sols.indexOf(s);
       const b = document.createElement('button');
@@ -728,11 +736,18 @@
       b.setAttribute('aria-pressed', String(i === f.sel));
       const tag = i === 0 ? 'Recommended' : s === shortest && s.len < sols[0].len ? 'Shortest' : 'Also good';
       b.innerHTML = `<span class="n">${s.len} moves<br>${tag}</span><span class="alg">${s.moves.join(' ')}</span>`;
-      b.addEventListener('click', () => { if (!S.busy && f.sel !== i) { stopPlay(); selectSolution(i); } });
+      b.disabled = f.idx > 0 && f.sel !== i;
+      b.addEventListener('click', () => { if (!S.busy && f.sel !== i && f.idx === 0) { stopPlay(); selectSolution(i); } });
       $('#opts').appendChild(b);
     });
     renderPhases();
     setControls();
+  }
+  function renderOptionsLock() {
+    const f = S.flow;
+    if (!f || !f.solutions || $('#others').hidden) return;
+    const locked = f.idx > 0;
+    if ((!!$('#opts p')) !== locked) renderFlow();
   }
   function phaseAt(f, i) { return f.phases.find(p => i >= p.from && i < p.to) || f.phases[f.phases.length - 1]; }
   function renderPhases() {
@@ -793,7 +808,8 @@
     const best = bestPair();
     const allDone = S.pairList.length && S.pairList.every(p => p.solved);
     if (allDone) { next.innerHTML = S.practice ? `New practice cube ${ICON_NEXT}` : 'All four pairs done'; next.disabled = !S.practice; return; }
-    next.innerHTML = best ? `Next pair: ${pairName(best.pair)} ${ICON_NEXT}` : 'Pick the next pair';
+    const finding = !best && S.pairList.some(p => !p.solved && p.len == null);
+    next.innerHTML = best ? `Next pair: ${pairName(best.pair)} ${ICON_NEXT}` : finding ? 'Finding the next pair…' : 'Pick the next pair';
     next.disabled = !best;
   }
   function onNext() {
@@ -839,8 +855,10 @@
     if (next && Cube.MOVES[next].base === 'B') { view3d.lookFrom(Math.PI - view3d.HOME.theta, view3d.HOME.phi, 450); view3d.swung = true; }
     else if (view3d.swung) { view3d.lookFrom(view3d.HOME.theta, view3d.HOME.phi, 450); view3d.swung = false; }
     renderPhases();
-    setControls();
+    renderOptionsLock();
+    // at the end, refresh the pair list first so the button never names the pair just solved
     if (f.idx === n) refreshPairs();
+    setControls();
   }
   async function step(dir, fast) {
     const f = S.flow;
@@ -1460,7 +1478,12 @@
     const rot = $('#opt-rotate'), spd = $('#opt-speed');
     rot.checked = S.settings.rotate; spd.value = S.settings.speed;
     const saveSettings = () => store.set('settings', S.settings);
-    rot.addEventListener('change', () => { S.settings.rotate = rot.checked; saveSettings(); const f = S.flow; if (f && f.kind === 'pair') { S.cube = f.start; startPair(f.pair); } else refreshPairs(); });
+    rot.addEventListener('change', () => {
+      S.settings.rotate = rot.checked; saveSettings();
+      const f = S.flow;
+      if (f && f.kind === 'pair' && f.idx === 0 && !f.loading) startPair(f.pair);
+      else { if (f && f.idx > 0) toast('Applies from the next pair'); refreshPairs(); }
+    });
     spd.addEventListener('input', () => { S.settings.speed = +spd.value; saveSettings(); });
     document.addEventListener('keydown', e => {
       if (S.mode !== 'cube' || e.target.closest('input,select,textarea')) return;

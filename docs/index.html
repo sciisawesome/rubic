@@ -65,7 +65,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .btn.on-dark { background: #fff; color: var(--ink); border-color: #fff; }
 .btn.on-dark:hover { background: #e9ebf0; }
 .btn.big { padding: 13px 22px; font-size: 16px; }
-.icon-btn { width: 36px; height: 36px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.94); display: grid; place-items: center; padding: 0; color: var(--ink-2); }
+.icon-btn { width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.94); display: grid; place-items: center; padding: 0; color: var(--ink-2); }
 .icon-btn:hover { background: var(--soft); }
 .icon-btn svg { width: 18px; height: 18px; }
 .icon-btn.plain { border-color: transparent; background: none; }
@@ -89,9 +89,10 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .hold { position: absolute; top: 12px; left: 12px; font-size: 13px; font-weight: 600; color: var(--ink-2); background: rgba(255,255,255,.9); border-radius: 999px; padding: 5px 11px 5px 7px; box-shadow: var(--shadow); display: flex; gap: 6px; align-items: center; max-width: calc(100% - 70px); }
 .hold .sep { color: #b9bcc6; font-weight: 400; }
 .hold .tag { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 7px; margin-right: 2px; }
-.bottom-map { position: absolute; top: 54px; left: 12px; display: grid; gap: 4px; justify-items: center; background: rgba(255,255,255,.9); border-radius: 12px; padding: 6px 6px 5px; box-shadow: var(--shadow); }
+.bottom-map { position: absolute; top: 58px; left: 12px; display: grid; gap: 4px; justify-items: center; background: rgba(255,255,255,.9); border-radius: 12px; padding: 6px 6px 5px; box-shadow: var(--shadow); }
 .bm-grid { display: grid; grid-template-columns: repeat(3, 13px); gap: 2px; padding: 2px; background: #d9d3c6; border-radius: 5px; }
 .bm-grid i { width: 13px; height: 13px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.bm-title { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .bm-label { font-size: 10.5px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
 .bm-label.ok { color: var(--good); }
 .bm-label.out { color: var(--warn); }
@@ -166,7 +167,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .pface.bad .mini { box-shadow: 0 0 0 3px var(--warn); }
 
 /* Pair picker */
-.pairs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 8px; }
+.pairs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .pair { border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--bg); padding: 10px 12px; text-align: left; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 56px; transition: background-color .15s, border-color .15s; }
 .pair:hover { background: var(--soft); }
 .pair:disabled { cursor: default; opacity: .45; }
@@ -205,6 +206,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .opts { display: grid; gap: 6px; margin-top: 10px; }
 .opt { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; background: var(--bg); display: flex; gap: 12px; align-items: center; text-align: left; }
 .opt:hover { background: var(--soft); }
+.opt:disabled { opacity: .45; cursor: default; }
 .opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .opt .n { font-size: 12px; color: var(--muted); white-space: nowrap; line-height: 1.3; min-width: 64px; }
 .alg { font-family: var(--mono); font-size: 14px; font-weight: 600; word-break: break-word; }
@@ -298,8 +300,9 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
         <div class="vf-msg" id="vf-msg" hidden></div>
       </div>
       <div class="cube-ui" id="cube-ui">
-        <div class="hold" id="hold"></div>
+        <div class="hold" id="hold" role="img"></div>
         <div class="bottom-map" id="bottom-map" role="img" title="Bottom of the cube, seen through from above">
+          <span class="bm-title">Bottom</span>
           <div class="bm-grid" id="bm-grid"></div>
           <span class="bm-label" id="bm-label"></span>
         </div>
@@ -342,15 +345,15 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       <p class="case" id="cross-text"></p>
       <div><button class="btn primary" id="btn-cross">Show the cross moves</button></div>
     </div>
-    <div class="card" id="pairs-card" hidden>
-      <div class="card-head"><h3>Pick a pair</h3><span class="small muted" id="pairs-status"></span></div>
-      <div class="pairs" id="pairs"></div>
-    </div>
     <div class="card" id="flow-card" hidden>
       <div class="card-head"><h3 id="flow-title"></h3><button class="icon-btn plain" id="btn-close-flow" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
       <p class="case" id="flow-case"></p>
       <ol class="phases" id="phases"></ol>
       <details class="others" id="others"><summary>Other ways to solve it</summary><div class="opts" id="opts"></div></details>
+    </div>
+    <div class="card" id="pairs-card" hidden>
+      <div class="card-head"><h3>Pick a pair</h3><span class="small muted" id="pairs-status"></span></div>
+      <div class="pairs" id="pairs"></div>
     </div>
     <details class="card guide" id="guide-card" hidden>
       <summary>Patterns to know</summary>
@@ -849,8 +852,15 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       c += COST[mv.base] + (mv.amount === 2 ? 0.3 : 0);
       if (k && MOVES[list[k - 1]].base !== mv.base && mv.base !== 'U' && MOVES[list[k - 1]].base !== 'U') c += 0.4; // regrip
     });
+    // "side, top, side back" triggers are the shapes learners drill: favour solutions made of them
+    for (let i = 0; i + 2 < list.length; i++) {
+      const b = MOVES[list[i]].base;
+      if (b === 'U' || 'xyz'.includes(b)) continue;
+      if (MOVES[list[i + 1]].base === 'U' && list[i + 2] === invertMove(list[i])) { c -= TRIGGER_BONUS; i += 2; }
+    }
     return c;
   }
+  const TRIGGER_BONUS = 1.1;
 
   // IDA* collecting all solutions of the minimal length (and +extra).
   function idaSearch(start, mt, h, isGoal, apply, opts) {
@@ -867,7 +877,6 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       if (g === bound || sols.length >= limit) return;
       for (const m of mt) {
         if (m.face === lastFace) continue;
-        if (m.face === OPPOSITE[lastFace] && 'URF'.indexOf(m.face) < 0 && false) continue;
         path.push(m.name);
         dfs(apply(st, m), g + 1, bound, m.face);
         path.pop();
@@ -903,14 +912,12 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     // st layout: [e0,e1,e2,e3, corner, edge, k0c,k0e, k1c,k1e, ...]
     const start = cr.concat([CIDX[t.corner], EIDX[t.edge]]).concat(...keepT);
     const goal = CROSS.map(e => EIDX[e.st]).concat([CIDX[SLOTS.FR.corner], EIDX[SLOTS.FR.edge]]).concat(...keep.map(n => [CIDX[SLOTS[n].corner], EIDX[SLOTS[n].edge]]));
-    const P = 24 * 24 * 24 * 24;
     const h = st => {
       const base = ((st[0] * 24 + st[1]) * 24 + st[2]) * 24 + st[3];
       let v = Math.max(T.crossC[base * 24 + st[4]], T.crossE[base * 24 + st[5]]);
       for (let k = 0; k < keep.length; k++) v = Math.max(v, T.pair[keep[k]][st[6 + 2 * k] * 24 + st[7 + 2 * k]]);
       return v;
     };
-    void P;
     const isGoal = st => st.every((v, i) => v === goal[i]);
     const apply = (st, m) => {
       const o = st.slice();
@@ -965,15 +972,9 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     const mv = MOVES[m];
     if (mv.base === 'U' || mv.base === 'D') return m;
     // face in rotated frame -> original face: undo rotation r on the face normal.
-    const inv = MOVES[invertMove(r)];
-    const n = NORMALS[mv.base];
-    const p = [n[0], n[1], n[2]];
     // move the face's center sticker back through the inverse rotation
-    const ci = centerIndex(mv.base);
-    const back = inv.to[ci];
-    const face = STICKERS[back].face;
-    void p;
-    return face + m.slice(mv.base.length);
+    const back = MOVES[invertMove(r)].to[centerIndex(mv.base)];
+    return STICKERS[back].face + m.slice(mv.base.length);
   }
 
   function nameMoves(list) { return list.join(' '); }
@@ -1370,24 +1371,6 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     return ans;
   }
 
-  // Which color is each photo's center? samplesList: array of 9-sample arrays.
-  function guessCenters(samplesList) {
-    const labs = samplesList.map(s => rgb2lab(s[4]));
-    const n = labs.length;
-    if (n > 6) return labs.map(l => nearestDefault(l));
-    const cost = [];
-    for (let i = 0; i < 6; i++) cost.push(COLORS.map(c => i < n ? dist(labs[i], rgb2lab(DEFAULT_RGB[c])) : 0));
-    const a = hungarian(cost);
-    return labs.map((_, i) => COLORS[a[i]]);
-  }
-  function nearestDefault(l) {
-    let best = null, bd = Infinity;
-    for (const c of COLORS) { const d = dist(l, rgb2lab(DEFAULT_RGB[c])); if (d < bd) { bd = d; best = c; } }
-    return best;
-  }
-
-  // faces: {color: samples[9]}. Uses each photo's own center as that color's reference,
-  // then assigns exactly 9 stickers per color.
   // Read every captured sticker at once: each color is matched to its face's own center and
   // may appear at most 9 times. `fixed` holds squares the user set by hand ({color: {idx: label}}).
   function classify(faces, fixed) {
@@ -1451,7 +1434,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
   const STD_LAYOUT = ['Y', 'O', 'G', 'W', 'R', 'B']; // U R F D L B of a standard-scheme cube
   const FACE_WORD = { U: 'top', D: 'bottom', F: 'front', B: 'back', R: 'right', L: 'left' };
   const ACCENT = 0x4f46e5;
-  const APP_VERSION = '25 Oct, 12:49';   // stamped by build-single.mjs
+  const APP_VERSION = '25 Oct, 13:23';   // stamped by build-single.mjs
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   const chip = c => `<span class="chip" style="background:${HEX[c]}"></span>`;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1498,13 +1481,6 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
   })();
 
   // ---------- 3D cube ----------
-  function roundedShape(w, r) {
-    const s = new THREE.Shape(), h = w / 2;
-    s.moveTo(-h + r, -h); s.lineTo(h - r, -h); s.quadraticCurveTo(h, -h, h, -h + r);
-    s.lineTo(h, h - r); s.quadraticCurveTo(h, h, h - r, h); s.lineTo(-h + r, h);
-    s.quadraticCurveTo(-h, h, -h, h - r); s.lineTo(-h, -h + r); s.quadraticCurveTo(-h, -h, -h + r, -h);
-    return s;
-  }
   // Rounded square with its own radius per corner: [top-left, top-right, bottom-right, bottom-left].
   function cornerShape(w, rr, path) {
     const s = path || new THREE.Shape(), h = w / 2, [tl, tr, br, bl] = rr;
@@ -1906,8 +1882,14 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     const home = st => Cube.trackCross(st).every((x, i) => x === Cube.CROSS[i].st);
     const okBefore = home(before), okAfter = home(after);
     const base = Cube.MOVES[m].base;
+    if (f.kind === 'cross') {
+      const now = Cube.CROSS.map((e, i) => i).filter(i => ca[i] === Cube.CROSS[i].st && cb[i] !== Cube.CROSS[i].st);
+      if (now.length) return `Puts the ${D}–${NAME[Cube.colorOf(after, Cube.CROSS[now[0]].faces[1])]} edge home, under its center.`;
+      if (base === 'U') return 'Top only: lines an edge up above the spot it belongs in.';
+      if (base === 'D') return 'Turns the bottom so the edges there line up with their centers.';
+      return 'Moves an edge closer to its spot.';
+    }
     if (base === 'U') return okBefore ? `Top only: the ${D} cross is never touched, so this is free.` : 'Top only: moves the pieces while the side is turned.';
-    if (f.kind === 'cross') return '';
     const moved = Cube.CROSS.map((e, i) => i).filter(i => cb[i] !== ca[i]);
     const edgeName = i => `${D}–${NAME[Cube.colorOf(after, Cube.CROSS[i].faces[1])]}`;
     const side = FACE_WORD[base];
@@ -2092,7 +2074,11 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     flow.rotation = r.rotation || '';
     flow.solutions = r.solutions;
     selectSolution(0);
-    if (window.innerWidth < 900) $('#flow-card').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (window.innerWidth < 900) {
+      const pinned = $('.stage-wrap').getBoundingClientRect().bottom;
+      const top = $('#flow-card').getBoundingClientRect().top + window.scrollY - pinned - 8;
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    }
   }
   async function startCross() {
     if (S.busy) return;
@@ -2103,6 +2089,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       focus: Cube.CROSS.map(e => e.faces.map(f => Cube.colorOf(st, f)).sort().join('')),
       start: st, solutions: null, loading: true, rotation: '',
     };
+    $('#cross-card').hidden = true;
     renderFlow(); paint();
     const r = await Solver.call({ op: 'cross', state: st });
     if (S.flow !== flow) return;
@@ -2111,7 +2098,6 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
   }
   function selectSolution(i) {
     const f = S.flow;
-    const restarting = f.idx > 0;
     f.sel = i;
     f.moves = (f.rotation ? [f.rotation] : []).concat(f.solutions[i].moves);
     f.states = [f.start];
@@ -2119,7 +2105,6 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     f.phases = phasesFor(f);
     f.idx = 0;
     S.cube = f.start; saveCube();
-    if (restarting) toast('Back to the start of this pair');
     paint(); renderFlow(); afterStep();
   }
   function closeFlow() {
@@ -2163,6 +2148,12 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     if (!shown.includes(shortest)) shown = [sols[0], sols[1], shortest];
     $('#others').hidden = shown.length < 2;
     $('#opts').innerHTML = '';
+    if (f.idx > 0) {
+      const note = document.createElement('p');
+      note.className = 'small muted';
+      note.textContent = 'To switch, go back to the first move (tap it in the steps above) so your cube matches.';
+      $('#opts').appendChild(note);
+    }
     shown.forEach(s => {
       const i = sols.indexOf(s);
       const b = document.createElement('button');
@@ -2170,11 +2161,18 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
       b.setAttribute('aria-pressed', String(i === f.sel));
       const tag = i === 0 ? 'Recommended' : s === shortest && s.len < sols[0].len ? 'Shortest' : 'Also good';
       b.innerHTML = `<span class="n">${s.len} moves<br>${tag}</span><span class="alg">${s.moves.join(' ')}</span>`;
-      b.addEventListener('click', () => { if (!S.busy && f.sel !== i) { stopPlay(); selectSolution(i); } });
+      b.disabled = f.idx > 0 && f.sel !== i;
+      b.addEventListener('click', () => { if (!S.busy && f.sel !== i && f.idx === 0) { stopPlay(); selectSolution(i); } });
       $('#opts').appendChild(b);
     });
     renderPhases();
     setControls();
+  }
+  function renderOptionsLock() {
+    const f = S.flow;
+    if (!f || !f.solutions || $('#others').hidden) return;
+    const locked = f.idx > 0;
+    if ((!!$('#opts p')) !== locked) renderFlow();
   }
   function phaseAt(f, i) { return f.phases.find(p => i >= p.from && i < p.to) || f.phases[f.phases.length - 1]; }
   function renderPhases() {
@@ -2235,7 +2233,8 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     const best = bestPair();
     const allDone = S.pairList.length && S.pairList.every(p => p.solved);
     if (allDone) { next.innerHTML = S.practice ? `New practice cube ${ICON_NEXT}` : 'All four pairs done'; next.disabled = !S.practice; return; }
-    next.innerHTML = best ? `Next pair: ${pairName(best.pair)} ${ICON_NEXT}` : 'Pick the next pair';
+    const finding = !best && S.pairList.some(p => !p.solved && p.len == null);
+    next.innerHTML = best ? `Next pair: ${pairName(best.pair)} ${ICON_NEXT}` : finding ? 'Finding the next pair…' : 'Pick the next pair';
     next.disabled = !best;
   }
   function onNext() {
@@ -2281,8 +2280,10 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     if (next && Cube.MOVES[next].base === 'B') { view3d.lookFrom(Math.PI - view3d.HOME.theta, view3d.HOME.phi, 450); view3d.swung = true; }
     else if (view3d.swung) { view3d.lookFrom(view3d.HOME.theta, view3d.HOME.phi, 450); view3d.swung = false; }
     renderPhases();
-    setControls();
+    renderOptionsLock();
+    // at the end, refresh the pair list first so the button never names the pair just solved
     if (f.idx === n) refreshPairs();
+    setControls();
   }
   async function step(dir, fast) {
     const f = S.flow;
@@ -2902,7 +2903,12 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
     const rot = $('#opt-rotate'), spd = $('#opt-speed');
     rot.checked = S.settings.rotate; spd.value = S.settings.speed;
     const saveSettings = () => store.set('settings', S.settings);
-    rot.addEventListener('change', () => { S.settings.rotate = rot.checked; saveSettings(); const f = S.flow; if (f && f.kind === 'pair') { S.cube = f.start; startPair(f.pair); } else refreshPairs(); });
+    rot.addEventListener('change', () => {
+      S.settings.rotate = rot.checked; saveSettings();
+      const f = S.flow;
+      if (f && f.kind === 'pair' && f.idx === 0 && !f.loading) startPair(f.pair);
+      else { if (f && f.idx > 0) toast('Applies from the next pair'); refreshPairs(); }
+    });
     spd.addEventListener('input', () => { S.settings.speed = +spd.value; saveSettings(); });
     document.addEventListener('keydown', e => {
       if (S.mode !== 'cube' || e.target.closest('input,select,textarea')) return;

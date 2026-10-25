@@ -438,8 +438,15 @@
       c += COST[mv.base] + (mv.amount === 2 ? 0.3 : 0);
       if (k && MOVES[list[k - 1]].base !== mv.base && mv.base !== 'U' && MOVES[list[k - 1]].base !== 'U') c += 0.4; // regrip
     });
+    // "side, top, side back" triggers are the shapes learners drill: favour solutions made of them
+    for (let i = 0; i + 2 < list.length; i++) {
+      const b = MOVES[list[i]].base;
+      if (b === 'U' || 'xyz'.includes(b)) continue;
+      if (MOVES[list[i + 1]].base === 'U' && list[i + 2] === invertMove(list[i])) { c -= TRIGGER_BONUS; i += 2; }
+    }
     return c;
   }
+  const TRIGGER_BONUS = 1.1;
 
   // IDA* collecting all solutions of the minimal length (and +extra).
   function idaSearch(start, mt, h, isGoal, apply, opts) {
@@ -456,7 +463,6 @@
       if (g === bound || sols.length >= limit) return;
       for (const m of mt) {
         if (m.face === lastFace) continue;
-        if (m.face === OPPOSITE[lastFace] && 'URF'.indexOf(m.face) < 0 && false) continue;
         path.push(m.name);
         dfs(apply(st, m), g + 1, bound, m.face);
         path.pop();
@@ -492,14 +498,12 @@
     // st layout: [e0,e1,e2,e3, corner, edge, k0c,k0e, k1c,k1e, ...]
     const start = cr.concat([CIDX[t.corner], EIDX[t.edge]]).concat(...keepT);
     const goal = CROSS.map(e => EIDX[e.st]).concat([CIDX[SLOTS.FR.corner], EIDX[SLOTS.FR.edge]]).concat(...keep.map(n => [CIDX[SLOTS[n].corner], EIDX[SLOTS[n].edge]]));
-    const P = 24 * 24 * 24 * 24;
     const h = st => {
       const base = ((st[0] * 24 + st[1]) * 24 + st[2]) * 24 + st[3];
       let v = Math.max(T.crossC[base * 24 + st[4]], T.crossE[base * 24 + st[5]]);
       for (let k = 0; k < keep.length; k++) v = Math.max(v, T.pair[keep[k]][st[6 + 2 * k] * 24 + st[7 + 2 * k]]);
       return v;
     };
-    void P;
     const isGoal = st => st.every((v, i) => v === goal[i]);
     const apply = (st, m) => {
       const o = st.slice();
@@ -554,15 +558,9 @@
     const mv = MOVES[m];
     if (mv.base === 'U' || mv.base === 'D') return m;
     // face in rotated frame -> original face: undo rotation r on the face normal.
-    const inv = MOVES[invertMove(r)];
-    const n = NORMALS[mv.base];
-    const p = [n[0], n[1], n[2]];
     // move the face's center sticker back through the inverse rotation
-    const ci = centerIndex(mv.base);
-    const back = inv.to[ci];
-    const face = STICKERS[back].face;
-    void p;
-    return face + m.slice(mv.base.length);
+    const back = MOVES[invertMove(r)].to[centerIndex(mv.base)];
+    return STICKERS[back].face + m.slice(mv.base.length);
   }
 
   function nameMoves(list) { return list.join(' '); }

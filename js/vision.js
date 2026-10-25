@@ -377,24 +377,6 @@
     return ans;
   }
 
-  // Which color is each photo's center? samplesList: array of 9-sample arrays.
-  function guessCenters(samplesList) {
-    const labs = samplesList.map(s => rgb2lab(s[4]));
-    const n = labs.length;
-    if (n > 6) return labs.map(l => nearestDefault(l));
-    const cost = [];
-    for (let i = 0; i < 6; i++) cost.push(COLORS.map(c => i < n ? dist(labs[i], rgb2lab(DEFAULT_RGB[c])) : 0));
-    const a = hungarian(cost);
-    return labs.map((_, i) => COLORS[a[i]]);
-  }
-  function nearestDefault(l) {
-    let best = null, bd = Infinity;
-    for (const c of COLORS) { const d = dist(l, rgb2lab(DEFAULT_RGB[c])); if (d < bd) { bd = d; best = c; } }
-    return best;
-  }
-
-  // faces: {color: samples[9]}. Uses each photo's own center as that color's reference,
-  // then assigns exactly 9 stickers per color.
   // Read every captured sticker at once: each color is matched to its face's own center and
   // may appear at most 9 times. `fixed` holds squares the user set by hand ({color: {idx: label}}).
   function classify(faces, fixed) {
