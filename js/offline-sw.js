@@ -19,5 +19,6 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(keep)));
     return;
   }
-  e.respondWith(fetch(req).then(keep).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html'))));
+  // always ask the server for the newest copy (GitHub Pages lets browsers reuse a page for 10 minutes)
+  e.respondWith(fetch(req, { cache: 'no-cache' }).then(keep).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html'))));
 });

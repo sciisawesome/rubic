@@ -9,6 +9,7 @@
   const STD_LAYOUT = ['Y', 'O', 'G', 'W', 'R', 'B']; // U R F D L B of a standard-scheme cube
   const FACE_WORD = { U: 'top', D: 'bottom', F: 'front', B: 'back', R: 'right', L: 'left' };
   const ACCENT = 0x4f46e5;
+  const APP_VERSION = '__APP_VERSION__';   // stamped by build-single.mjs
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   const chip = c => `<span class="chip" style="background:${HEX[c]}"></span>`;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -796,6 +797,12 @@
       } catch (e) { this.setBlocked(); return; }
       if (S.mode !== 'scan') { this.stopCamera(); return; }
       this.live = true;
+      // a touch darker than auto exposure keeps bright stickers from washing out (where the phone allows it)
+      try {
+        const track = this.stream.getVideoTracks()[0];
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps.exposureCompensation) track.applyConstraints({ advanced: [{ exposureCompensation: Math.max(caps.exposureCompensation.min, -0.7) }] }).catch(() => {});
+      } catch (e) { /* not supported */ }
       const v = $('#video');
       v.srcObject = this.stream; v.hidden = false;
       await v.play().catch(() => {});
@@ -848,7 +855,8 @@
       const sides = [len(0, 1), len(1, 2), len(2, 3), len(3, 0)];
       const ux = q[1][0] - q[0][0], uy = q[1][1] - q[0][1], vx = q[3][0] - q[0][0], vy = q[3][1] - q[0][1];
       const square = Math.min(...sides) / Math.max(...sides) > 0.72 && Math.abs(ux * vx + uy * vy) / (sides[0] * sides[3]) < 0.3;
-      const samples = Vision.sampleFace(W, det.quad);
+      const stats = {};
+      const samples = Vision.sampleFace(W, det.quad, stats);
       const labels = samples.map(x => this.read(x));
       const side = sides[0];
       const mid = qq => [(qq[0][0] + qq[2][0]) / 2, (qq[0][1] + qq[2][1]) / 2];
@@ -864,6 +872,7 @@
       const need = 7, progress = this.stable ? Math.min(1, this.stable.n / need) : 0;
       this.drawOverlay(o, dpr, g, det.quad.map(toScreen), labels, progress);
       if (!square) { this.setMsg('Turn the side so it faces the camera straight on'); return; }
+      if (stats.clipped > 0.35) { this.stable = null; this.setMsg('Too bright \u00b7 tilt the cube away from the light'); return; }
       const have = this.faces[labels[4]];
       const sameAs = f => [0, 1, 2, 3].some(k => { let g = f.labels; for (let t = 0; t < k; t++) g = [6, 3, 0, 7, 4, 1, 8, 5, 2].map(i => g[i]); return g.filter((x, i) => x === labels[i]).length >= 6; });
       if (have && sameAs(have)) {
@@ -1143,6 +1152,7 @@
 
   async function init() {
     window.F2L = { S, Scan }; // handy for debugging from the console
+    document.querySelectorAll('.app-version').forEach(el => { el.textContent = 'Version ' + (APP_VERSION.startsWith('__') ? 'preview' : APP_VERSION); });
     view3d = new Cube3D($('#stage'), onTapSticker);
     wire();
     Solver.call({ op: 'warm' });

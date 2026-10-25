@@ -290,8 +290,10 @@
 
   // Robust average color of each of the 9 cells: four small patches per cell, placed
   // off-center so logos and center caps don't count, trimmed of glare and shadow.
-  function sampleFace(cv, quad) {
+  // `stats` (optional) receives `clipped`: the share of blown-out pixels on the face.
+  function sampleFace(cv, quad, stats) {
     const ctx = cv.getContext('2d', { willReadFrequently: true });
+    let clippedN = 0, totalN = 0;
     const side = Math.hypot(quad[1][0] - quad[0][0], quad[1][1] - quad[0][1]) / 3;
     const rad = Math.max(1, Math.round(side * 0.09));
     const out = [];
@@ -303,10 +305,14 @@
         const x0 = Math.max(0, Math.round(x - rad)), y0 = Math.max(0, Math.round(y - rad));
         const w = Math.max(1, Math.min(cv.width - x0, rad * 2)), h = Math.max(1, Math.min(cv.height - y0, rad * 2));
         const d = ctx.getImageData(x0, y0, w, h).data;
-        const px = [];
+        let px = [];
         for (let i = 0; i < d.length; i += 4) px.push([d[i], d[i + 1], d[i + 2]]);
+        // blown-out pixels lie about the colour (a bright orange clips to yellow): leave them out
+        const ok = px.filter(p => Math.max(p[0], p[1], p[2]) < 248);
+        clippedN += px.length - ok.length; totalN += px.length;
+        if (ok.length >= px.length * 0.3) px = ok;
         px.sort((p, q) => (p[0] + p[1] + p[2]) - (q[0] + q[1] + q[2]));
-        const lo = Math.floor(px.length * 0.2), hi = Math.max(lo + 1, Math.ceil(px.length * 0.8));
+        const lo = Math.floor(px.length * 0.15), hi = Math.max(lo + 1, Math.ceil(px.length * 0.7));
         const acc = [0, 0, 0];
         for (let i = lo; i < hi; i++) for (let k = 0; k < 3; k++) acc[k] += px[i][k];
         const rgb = acc.map(v => v / (hi - lo));
@@ -317,6 +323,7 @@
       const agree = patches.filter(p => dist(p.lab, med.lab) < 18);
       out.push([0, 1, 2].map(k => agree.reduce((t, p) => t + p.rgb[k], 0) / agree.length));
     }
+    if (stats) stats.clipped = totalN ? clippedN / totalN : 0;
     return out;
   }
 

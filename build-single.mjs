@@ -21,7 +21,8 @@ swap('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.mi
 swap('<script src="js/cube.js"></script>', inline(read('./js/cube.js'), 'cube-src') +
   `\n<script>window.SOLVER_WORKER_URL = URL.createObjectURL(new Blob([document.getElementById('cube-src').textContent, ${safe(JSON.stringify(workerBody))}], { type: 'text/javascript' }));</script>`);
 swap('<script src="js/vision.js"></script>', inline(read('./js/vision.js')));
-swap('<script src="js/app.js"></script>', inline(read('./js/app.js')));
+const stamp = new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+swap('<script src="js/app.js"></script>', inline(read('./js/app.js').replace('__APP_VERSION__', stamp)));
 
 const base = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">' +
   '<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>';

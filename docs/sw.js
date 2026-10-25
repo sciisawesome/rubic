@@ -1,6 +1,6 @@
 // Offline support for the hosted app: own files are fetched fresh when online and served
 // from the cache when offline; fonts are cached the first time they load.
-const CACHE = 'f2l-coach-1792899635412';
+const CACHE = 'f2l-coach-1792900339366';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -19,5 +19,6 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(keep)));
     return;
   }
-  e.respondWith(fetch(req).then(keep).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html'))));
+  // always ask the server for the newest copy (GitHub Pages lets browsers reuse a page for 10 minutes)
+  e.respondWith(fetch(req, { cache: 'no-cache' }).then(keep).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html'))));
 });
