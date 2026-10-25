@@ -753,18 +753,36 @@
         if (f) b.addEventListener('click', () => this.openReview(f.cv, f.quad, f.samples, f.labels, c));
         host.appendChild(b);
       });
-      $('#face-count').textContent = `${this.count()} of 5`;
+      $('#face-count').textContent = `${this.count()} of ${this.needColor || this.problem ? 6 : 5}`;
     },
-    // Which color is this sample? Nearest confirmed sticker from this camera, else the default.
+    // Which color is this sample? Each confirmed side's center shows how this camera sees
+    // that color; colors without a confirmed side use a standard shade. (Only centers are
+    // used: a sticker confirmed by mistake must not teach the reader the wrong color.)
     read(rgb) {
       const lab = Vision.toLab(rgb);
       let best = null, bd = Infinity;
-      for (const c in this.faces) {
+      for (const c of Vision.COLORS) {
         const f = this.faces[c];
-        f.labs.forEach((l, i) => { const d = Vision.labDistLab(lab, l); if (d < bd) { bd = d; best = f.labels[i]; } });
+        let ref = Vision.toLab(Vision.DEFAULT_RGB[c]);
+        if (f) ref = c === 'W' ? f.labs[4].map((v, k) => (v + ref[k]) / 2) : f.labs[4];
+        const d = Vision.colorCost(lab, ref, c === 'W');
+        if (d < bd) { bd = d; best = c; }
       }
-      const def = Vision.nearest(rgb);
-      return best && bd <= Vision.labDist(rgb, Vision.DEFAULT_RGB[def]) + 6 ? best : def;
+      return best;
+    },
+
+    // Read a new side together with the sides already captured: every color matched to the
+    // centers seen so far, at most 9 of each. Squares the user set by hand stay as set.
+    readFace(samples) {
+      const center = this.read(samples[4]);
+      const all = {}, fixed = {};
+      for (const c in this.faces) {
+        if (c === center) continue;
+        all[c] = this.faces[c].samples;
+        fixed[c] = {}; this.faces[c].edited.forEach(i => { fixed[c][i] = this.faces[c].labels[i]; });
+      }
+      all[center] = samples;
+      return Vision.classify(all, fixed).grids[center];
     },
 
     // ----- live camera -----
@@ -835,15 +853,20 @@
       const side = sides[0];
       const mid = qq => [(qq[0][0] + qq[2][0]) / 2, (qq[0][1] + qq[2][1]) / 2];
       const moved = this.stable ? Math.hypot(mid(q)[0] - mid(this.stable.quad)[0], mid(q)[1] - mid(this.stable.quad)[1]) : Infinity;
-      const sig = labels.join('');
-      if (square && this.stable && this.stable.sig === sig && moved < side * 0.15) { this.stable.n++; this.stable.frames.push(samples); }
-      else this.stable = square ? { sig, n: 1, frames: [samples] } : null;
+      // steady = the face stays put and mostly reads the same (a square or two may flicker;
+      // the median over the steady frames settles them)
+      const agree = this.stable ? labels.filter((l, i) => l === this.stable.labels[i]).length : 0;
+      const steady = square && det.score >= 13;
+      if (steady && this.stable && moved < side * 0.1 && agree >= 6) { this.stable.n++; this.stable.frames.push(samples); }
+      else this.stable = steady ? { n: 1, frames: [samples] } : null;
+      if (this.stable) this.stable.labels = labels;
       if (this.stable) this.stable.quad = det.quad;
-      const need = 6, progress = this.stable ? Math.min(1, this.stable.n / need) : 0;
+      const need = 7, progress = this.stable ? Math.min(1, this.stable.n / need) : 0;
       this.drawOverlay(o, dpr, g, det.quad.map(toScreen), labels, progress);
       if (!square) { this.setMsg('Turn the side so it faces the camera straight on'); return; }
       const have = this.faces[labels[4]];
-      if (have && Vision.labDist(have.samples[4], samples[4]) < 18) {
+      const sameAs = f => [0, 1, 2, 3].some(k => { let g = f.labels; for (let t = 0; t < k; t++) g = [6, 3, 0, 7, 4, 1, 8, 5, 2].map(i => g[i]); return g.filter((x, i) => x === labels[i]).length >= 6; });
+      if (have && sameAs(have)) {
         this.setMsg(`Already have the ${NAME[labels[4]]} side \u00b7 turn to a new one`);
         this.stable = null;
         return;
@@ -856,7 +879,7 @@
       snap.width = snap.height = N;
       snap.getContext('2d').drawImage(W, 0, 0);
       this.stable = null;
-      this.openReview(snap, det.quad, med, med.map(x => this.read(x)), null);
+      this.openReview(snap, det.quad, med, this.readFace(med), null);
     },
     drawOverlay(o, dpr, g, quad, labels, progress) {
       const x = o.getContext('2d');
@@ -893,14 +916,14 @@
         const det = Vision.detectFace(cv);
         const quad = det ? det.quad : Vision.autoQuad(cv);
         const samples = Vision.sampleFace(cv, quad);
-        this.openReview(cv, quad, samples, samples.map(x => this.read(x)), null);
-        if (!det) $('#rv-hint').textContent = 'The grid may be off. Check every square, or retake closer and straight on.';
+        this.openReview(cv, quad, samples, this.readFace(samples), null);
+        if (!det) { this.review.note = 'The grid may be off. Check every square, or retake closer and straight on.'; this.renderReview(); }
       } catch (e) { toast(e.message); }
     },
 
     // ----- check and confirm -----
     openReview(cv, quad, samples, labels, editing) {
-      this.review = { cv, quad, samples, labels: labels.slice(), sel: -1, editing };
+      this.review = { cv, quad, samples, labels: labels.slice(), sel: -1, editing, edited: new Set(editing && this.faces[editing] ? this.faces[editing].edited : []) };
       if (navigator.vibrate) { try { navigator.vibrate(20); } catch (e) { /* not allowed */ } }
       this.showReview(true);
       $('#rv-hint').textContent = 'Do these match your cube? Tap a square to fix it.';
@@ -935,9 +958,21 @@
         const b = document.createElement('button');
         b.style.background = HEX[col];
         b.setAttribute('aria-label', 'Make it ' + NAME[col]);
-        b.addEventListener('click', () => { r.labels[r.sel] = col; r.sel = -1; this.renderReview(); });
+        b.addEventListener('click', () => { r.labels[r.sel] = col; r.edited.add(r.sel); r.sel = -1; this.renderReview(); });
         pal.appendChild(b);
       });
+      // a cube has 9 of each color: flag a side that would push a color past that
+      const counts = {};
+      for (const k in this.faces) if (k !== r.editing && k !== c) this.faces[k].labels.forEach(x => { counts[x] = (counts[x] || 0) + 1; });
+      r.labels.forEach(x => { counts[x] = (counts[x] || 0) + 1; });
+      const over = Vision.COLORS.filter(x => counts[x] > 9);
+      const hint = $('#rv-hint');
+      if (r.sel >= 0) { hint.textContent = 'Pick the right color for that square.'; hint.className = 'small'; }
+      else if (over.length) {
+        const x = over[0], look = { Y: 'orange or white', O: 'red or yellow', R: 'orange', W: 'yellow', G: 'blue', B: 'green' }[x];
+        hint.textContent = `That makes ${counts[x]} ${NAME[x]}; a cube has 9. Some may be ${look}. Tap them to fix.`;
+        hint.className = 'small warn-text';
+      } else { hint.textContent = r.note || 'Do these match your cube? Tap a square to fix it.'; hint.className = 'small'; }
       this.drawReviewPhoto();
     },
     drawReviewPhoto() {
@@ -991,7 +1026,7 @@
       if (!r) return;
       if (r.editing && r.editing !== r.labels[4]) delete this.faces[r.editing];
       const c = r.labels[4];
-      this.faces[c] = { labels: r.labels.slice(), samples: r.samples, labs: r.samples.map(Vision.toLab), cv: r.cv, quad: r.quad };
+      this.faces[c] = { labels: r.labels.slice(), samples: r.samples, labs: r.samples.map(Vision.toLab), cv: r.cv, quad: r.quad, edited: Array.from(r.edited) };
       this.review = null;
       if (this.problem) this.problem.delete(c);
       if (this.problem && !this.problem.size) this.problem = null;
@@ -1017,10 +1052,29 @@
     finish() {
       const n = this.count();
       if (n < 5) return false;
-      const grids = {};
-      for (const c in this.faces) grids[c] = this.faces[c].labels.slice();
-      let o = Cube.orientFromPhotos(grids, STD_LAYOUT);
-      if (!o.valid && n === 6) { const fixed = Cube.repair(o); if (fixed) o = { valid: true, state: fixed }; }
+      // read all stickers together (9 of each color), keeping squares the user set by hand;
+      // fall back to the colors exactly as confirmed
+      const samples = {}, fixed = {}, confirmed = {};
+      for (const c in this.faces) {
+        const f = this.faces[c];
+        samples[c] = f.samples; confirmed[c] = f.labels.slice();
+        fixed[c] = {}; f.edited.forEach(i => { fixed[c][i] = f.labels[i]; });
+      }
+      let o = Cube.orientFromPhotos(Vision.classify(samples, fixed).grids, STD_LAYOUT);
+      if (!o.valid) { const o2 = Cube.orientFromPhotos(confirmed, STD_LAYOUT); if (o2.valid) o = o2; }
+      if (!o.valid && n === 6) { const fixedState = Cube.repair(o); if (fixedState) o = { valid: true, state: fixedState }; }
+      if (!o.valid && n === 6) {
+        // one badly captured side shouldn't block everything: leave each out in turn and
+        // accept only if exactly one cube comes out
+        const found = new Map();
+        for (const skip in this.faces) {
+          const s5 = {}, f5 = {};
+          for (const c in samples) if (c !== skip) { s5[c] = samples[c]; f5[c] = fixed[c]; }
+          const r = Cube.orientFromPhotos(Vision.classify(s5, f5).grids, STD_LAYOUT);
+          if (r.valid) found.set(r.state.join(''), r);
+        }
+        if (found.size === 1) o = Array.from(found.values())[0];
+      }
       if (o.valid) {
         this.stopCamera();
         loadCube(canonical(o.state));
@@ -1056,6 +1110,7 @@
     $('#btn-cancelscan').addEventListener('click', () => setMode('cube'));
     $('#in-capture').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; Scan.fromFile(f); });
     $('#rv-ok').addEventListener('click', () => Scan.confirm());
+    $('#btn-restart-scan').addEventListener('click', () => { Scan.enter(); toast('Starting over'); });
     $('#rv-retake').addEventListener('click', () => Scan.retake());
     $('#rv-photo').addEventListener('click', e => Scan.tapPhoto(e));
     new ResizeObserver(() => { if (Scan.review) Scan.drawReviewPhoto(); }).observe($('#rv-photo'));

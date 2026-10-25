@@ -138,6 +138,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .pface.done .mini { box-shadow: 0 0 0 2px var(--good); }
 .pface.bad .mini { box-shadow: 0 0 0 3px var(--warn); }
 .pface:disabled { cursor: default; }
+.warn-text { color: var(--warn); font-weight: 600; }
 .tips { display: grid; gap: 6px; margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
 
 .pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -246,7 +247,7 @@ input[type="range"] { accent-color: var(--ink); width: 100%; }
   <div class="panel">
     <!-- while scanning -->
     <div class="card" id="scan-panel" hidden>
-      <div class="card-head"><div class="label">Sides confirmed</div><span class="small muted" id="face-count">0 of 5</span></div>
+      <div class="card-head"><div class="label">Sides confirmed <span id="face-count" style="margin-left:6px">0 of 5</span></div><button class="btn ghost small" id="btn-restart-scan">Start over</button></div>
       <div class="progress" id="faces"></div>
       <ol class="tips">
         <li>Capture a side, check its 9 colors, tap <b>Correct</b>.</li>

@@ -2,7 +2,10 @@
 (function (root) {
   'use strict';
 
-  const DEFAULT_RGB = { W: [235, 235, 230], Y: [235, 225, 40], G: [40, 200, 80], B: [30, 110, 235], R: [215, 30, 45], O: [250, 110, 30] };
+  // Typical sticker colours as phone cameras see them (bright stickerless cubes: lime green,
+  // lemon yellow, an orange that leans yellow under warm light). Only a starting point:
+  // each confirmed side's center recalibrates its colour.
+  const DEFAULT_RGB = { W: [220, 220, 210], Y: [228, 238, 50], G: [110, 215, 70], B: [60, 120, 215], R: [205, 45, 45], O: [240, 135, 35] };
   const COLORS = ['W', 'Y', 'G', 'B', 'R', 'O'];
 
   async function loadImage(src, maxSide) {
@@ -329,6 +332,18 @@
   }
   // Lightness matters less than hue under uneven lighting.
   function dist(a, b) { return Math.sqrt(0.35 * (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2); }
+  // How unlike a sticker colour (Lab) is from a reference colour. Glare and shadow change
+  // brightness and wash colours out, but barely move the hue, so coloured stickers are
+  // compared mostly by hue; white is "has almost no colour".
+  const WHITE_CHROMA = 22;
+  function colorCost(lab, ref, isWhite) {
+    const c = Math.hypot(lab[1], lab[2]);
+    if (isWhite) return 1.6 * c + 0.15 * Math.abs(lab[0] - ref[0]);
+    const cr = Math.hypot(ref[1], ref[2]);
+    let dh = Math.abs(Math.atan2(lab[2], lab[1]) - Math.atan2(ref[2], ref[1])) * 180 / Math.PI;
+    if (dh > 180) dh = 360 - dh;
+    return 1.3 * dh + 0.3 * Math.abs(lab[0] - ref[0]) + 0.08 * Math.abs(c - cr) + (c < WHITE_CHROMA ? 1.6 * (WHITE_CHROMA - c) + 20 : 0);
+  }
 
   // Hungarian algorithm, square cost matrix -> assignment row -> col.
   function hungarian(cost) {
@@ -373,7 +388,10 @@
 
   // faces: {color: samples[9]}. Uses each photo's own center as that color's reference,
   // then assigns exactly 9 stickers per color.
-  function classify(faces) {
+  // Read every captured sticker at once: each color is matched to its face's own center and
+  // may appear at most 9 times. `fixed` holds squares the user set by hand ({color: {idx: label}}).
+  function classify(faces, fixed) {
+    fixed = fixed || {};
     const present = COLORS.filter(c => faces[c]);
     const refs = {};
     COLORS.forEach(c => {
@@ -383,11 +401,11 @@
       refs[c] = own ? (c === 'W' ? own.map((v, k) => (v + def[k]) / 2) : own) : def;
     });
     const items = [];
-    present.forEach(c => faces[c].forEach((s, i) => { if (i !== 4) items.push({ c, i, lab: rgb2lab(s) }); }));
+    present.forEach(c => faces[c].forEach((s, i) => { if (i !== 4) items.push({ c, i, lab: rgb2lab(s), fix: fixed[c] && fixed[c][i] }); }));
     // at most 8 more stickers of each color; with a face missing, dummy rows soak up the slack
     const cols = [];
     COLORS.forEach(c => { for (let k = 0; k < 8; k++) cols.push(c); });
-    const cost = items.map(it => cols.map(c => dist(it.lab, refs[c])));
+    const cost = items.map(it => cols.map(c => it.fix ? (c === it.fix ? 0 : 1e6) : colorCost(it.lab, refs[c], c === 'W')));
     while (cost.length < cols.length) cost.push(cols.map(() => 0));
     const a = hungarian(cost);
     const out = {};
@@ -395,14 +413,14 @@
     items.forEach((it, k) => { out[it.c][it.i] = cols[a[k]]; });
     const doubt = {};
     items.forEach((it, k) => {
-      const ds = COLORS.map(c => dist(it.lab, refs[c])).sort((x, y) => x - y);
+      const ds = COLORS.map(c => colorCost(it.lab, refs[c], c === 'W')).sort((x, y) => x - y);
       if (cols[a[k]] !== nearest(it.lab, refs) || ds[1] - ds[0] < 8) (doubt[it.c] = doubt[it.c] || []).push(it.i);
     });
     return { grids: out, doubt };
   }
   function nearest(l, refs) {
     let best = null, bd = Infinity;
-    for (const c in refs) { const d = dist(l, refs[c]); if (d < bd) { bd = d; best = c; } }
+    for (const c in refs) { const d = colorCost(l, refs[c], c === 'W'); if (d < bd) { bd = d; best = c; } }
     return best;
   }
 
@@ -412,10 +430,10 @@
   function nearestColor(rgb, allowed) {
     const l = rgb2lab(rgb);
     let best = null, bd = Infinity;
-    for (const c of allowed || COLORS) { const d = dist(l, DEFAULT_LAB[c]); if (d < bd) { bd = d; best = c; } }
+    for (const c of allowed || COLORS) { const d = colorCost(l, DEFAULT_LAB[c], c === 'W'); if (d < bd) { bd = d; best = c; } }
     return best;
   }
   function labDist(a, b) { return dist(rgb2lab(a), rgb2lab(b)); }
 
-  root.Vision = { loadImage, autoQuad, detectFace, quadPoint, sampleFace, nearest: nearestColor, labDist, toLab: rgb2lab, labDistLab: dist, COLORS, DEFAULT_RGB };
+  root.Vision = { loadImage, autoQuad, detectFace, quadPoint, sampleFace, classify, nearest: nearestColor, labDist, toLab: rgb2lab, labDistLab: dist, colorCost, COLORS, DEFAULT_RGB };
 })(typeof self !== 'undefined' ? self : this);
