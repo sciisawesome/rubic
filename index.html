@@ -1,0 +1,297 @@
+<title>F2L Pair Coach</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: one white workspace. The stage (camera, then the 3D cube in the same spot) sits on top on phones, left on desktop; the panel follows. */
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --soft: #f4f5f7;
+  --line: #e5e7eb;
+  --ink: #111318;
+  --muted: #6b7180;
+  --accent: #4f46e5;
+  --accent-soft: #eef0ff;
+  --good: #12804a;
+  --good-soft: #e8f6ee;
+  --warn: #a94b06;
+  --warn-soft: #fff4e5;
+  --c-W: #f3f3ef; --c-Y: #ffd60a; --c-G: #19b24b; --c-B: #1663e8; --c-R: #da1f2d; --c-O: #ff7b14;
+  --font: "Onest", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --r: 14px;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font); -webkit-tap-highlight-color: transparent; }
+* { box-sizing: border-box; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; line-height: 1.2; text-wrap: balance; }
+p { margin: 0; }
+
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 12px; padding-block: 10px; min-height: 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--bg); }
+.brand { font-weight: 700; font-size: 17px; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
+.brand-mark { display: grid; grid-template-columns: repeat(2, 7px); gap: 2px; }
+.brand-mark i { width: 7px; height: 7px; border-radius: 2px; }
+.top .btn { margin-left: auto; }
+
+.main { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); padding-block: 12px 40px; max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+@media (min-width: 900px) { .main { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; padding-block: 20px 40px; } }
+
+/* Buttons */
+.btn { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 9px 16px; font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; justify-content: center; text-decoration: none; }
+.btn:hover { background: var(--soft); }
+.btn svg { flex: none; }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.primary:hover { background: #2a2d35; }
+.btn.ghost { border-color: transparent; background: none; color: var(--muted); }
+.btn.ghost:hover { color: var(--ink); background: var(--soft); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.on-dark { background: #fff; color: var(--ink); border-color: #fff; }
+.btn.on-dark:hover { background: #e9ebf0; }
+.btn.on-dark-ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.45); }
+.btn.on-dark-ghost:hover { background: rgba(255,255,255,.1); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.label { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.chip { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; border: 1px solid rgba(0,0,0,.12); flex: none; }
+
+/* Stage: camera and cube share it */
+.stage-wrap { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 56px); z-index: 5; background: var(--bg); padding-bottom: 4px; }
+@media (min-width: 900px) { .stage-wrap { top: 76px; } }
+.stage { position: relative; height: min(48svh, 560px); background: radial-gradient(120% 90% at 50% 35%, #ffffff 0%, var(--soft) 100%); border-radius: 20px; overflow: hidden; touch-action: none; transition: height .35s ease; }
+.stage.flowing { height: min(60svh, 560px); }
+.stage.scanning { height: min(64svh, 600px); background: #0d0f13; }
+@media (min-width: 900px) { .stage, .stage.flowing, .stage.scanning { height: min(74svh, 660px); } }
+.stage > canvas { display: block; width: 100%; height: 100%; }
+.stage.scanning > canvas { visibility: hidden; }
+.cube-ui[hidden] { display: none; }
+
+.scanner { position: absolute; inset: 0; }
+.scanner video, .scanner canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vf-msg { position: absolute; left: 10px; right: 10px; bottom: 10px; background: rgba(255,255,255,.95); color: var(--ink); border-radius: 14px; padding: 10px 14px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.vf-empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 14px; text-align: center; color: #fff; padding: 24px; }
+.vf-empty h2 { font-size: 22px; letter-spacing: -0.01em; }
+.vf-empty p { color: #c8ccd6; max-width: 34ch; margin: 0 auto; }
+.vf-cube { width: 72px; height: 72px; margin: 0 auto 4px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; padding: 4px; background: #23262e; border-radius: 12px; transform: rotate(-8deg); }
+.vf-cube i { border-radius: 4px; }
+.flash { animation: flash .5s ease-out; }
+@keyframes flash { from { box-shadow: inset 0 0 0 999px rgba(125,255,176,.45); } to { box-shadow: inset 0 0 0 999px rgba(125,255,176,0); } }
+
+.hold { position: absolute; top: 10px; left: 10px; font-size: 13px; font-weight: 500; background: rgba(255,255,255,.92); border-radius: 999px; padding: 5px 11px; border: 1px solid var(--line); display: flex; gap: 6px; align-items: center; max-width: calc(100% - 64px); }
+.stage-tools { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; }
+.icon-btn { width: 38px; height: 38px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.92); display: grid; place-items: center; padding: 0; }
+.icon-btn svg { width: 18px; height: 18px; }
+.player { position: absolute; left: 8px; right: 8px; bottom: 8px; background: rgba(255,255,255,.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; display: grid; gap: 10px; box-shadow: 0 8px 28px rgba(17,19,24,.10); }
+.player .cap { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 40px; padding: 0 2px; }
+.player .cap b { font-family: var(--mono); font-size: 22px; line-height: 1; color: #fff; background: var(--accent); border-radius: 10px; min-width: 46px; height: 40px; display: grid; place-items: center; padding: 0 8px; }
+.player .cap b.fin { background: var(--good); }
+.cap-body { display: grid; gap: 1px; min-width: 0; }
+.cap-body #cap-text { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.player .note { font-size: 12.5px; color: var(--good); font-weight: 500; line-height: 1.3; }
+.player .note:empty { display: none; }
+.player .count { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; align-self: start; padding-top: 2px; }
+.player .ctl { display: flex; gap: 6px; align-items: center; }
+.player .ctl .btn { height: 44px; padding: 0 14px; white-space: nowrap; }
+.player .ctl .btn.icon { width: 44px; padding: 0; flex: none; }
+.player .ctl .grow { flex: 1; }
+.tap-hint { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: rgba(255,255,255,.95); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+
+/* Panel */
+.panel { display: grid; gap: 16px; min-width: 0; }
+.card { border: 1px solid var(--line); border-radius: var(--r); padding: 14px; display: grid; gap: 10px; min-width: 0; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+.progress { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.pface { display: grid; gap: 6px; justify-items: center; text-align: center; font-size: 11.5px; font-weight: 600; color: var(--muted); background: none; border: 0; padding: 0; }
+.pface.done { color: var(--ink); }
+.mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; width: 100%; max-width: 58px; aspect-ratio: 1; padding: 3px; background: #1a1c22; border-radius: 9px; }
+.mini i { border-radius: 2px; background: var(--soft); }
+.mini.empty { background: var(--soft); outline: 1.5px dashed #cfd3da; outline-offset: -1.5px; }
+.mini.empty i { background: transparent; }
+.mini.empty i.c { background: var(--fc); border-radius: 3px; }
+.btn.big { padding: 13px 22px; font-size: 16px; }
+.review { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; background: #0d0f13; }
+.rv-photo-wrap { position: relative; min-height: 0; }
+.rv-photo-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: manipulation; }
+.rv-card { background: var(--bg); border-radius: 18px 18px 0 0; padding: 12px; display: grid; gap: 10px; }
+.rv-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.rv-head b { font-size: 16px; display: flex; gap: 6px; align-items: center; }
+.rv-body { display: flex; gap: 12px; align-items: flex-start; }
+.rv-grid { display: grid; grid-template-columns: repeat(3, 38px); gap: 4px; padding: 4px; background: #1a1c22; border-radius: 10px; flex: none; }
+.rv-grid button { width: 38px; height: 38px; border-radius: 6px; border: 0; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.rv-grid button[aria-pressed="true"] { outline: 3px solid var(--accent); outline-offset: 1px; }
+.rv-grid button.center { box-shadow: inset 0 0 0 1px rgba(0,0,0,.15), inset 0 0 0 5px rgba(255,255,255,.35); }
+.rv-side { display: grid; gap: 8px; min-width: 0; }
+.rv-palette { display: grid; grid-template-columns: repeat(3, 34px); gap: 6px; }
+.rv-palette button { width: 34px; height: 34px; border-radius: 8px; border: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.rv-actions { display: grid; grid-template-columns: 1fr 1.6fr; gap: 8px; }
+.rv-actions .btn { height: 48px; font-size: 15px; }
+.pface.done .mini { box-shadow: 0 0 0 2px var(--good); }
+.pface.bad .mini { box-shadow: 0 0 0 3px var(--warn); }
+.pface:disabled { cursor: default; }
+.tips { display: grid; gap: 6px; margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+
+.pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pair { border: 1px solid var(--line); border-radius: 12px; background: var(--bg); padding: 10px 11px; text-align: left; display: grid; gap: 4px; align-content: start; }
+.pair:hover { background: var(--soft); }
+.pair:disabled { cursor: default; opacity: .6; }
+.pair[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.pair .pc { display: flex; gap: 4px; align-items: center; font-weight: 600; font-size: 13.5px; min-width: 0; line-height: 1.25; }
+.pair .pc .chip { width: 16px; height: 16px; }
+.pair .meta { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; flex-wrap: wrap; }
+.pair .meta b { color: var(--ink); font-weight: 600; }
+.pair.solved { background: var(--good-soft); border-color: transparent; }
+.pair.solved .meta { color: var(--good); font-weight: 600; }
+.badge { justify-self: start; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; background: var(--accent-soft); color: var(--accent); padding: 2px 6px; border-radius: 6px; }
+.case { font-size: 14px; display: grid; gap: 3px; }
+.opts { display: grid; gap: 6px; }
+.opt { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; background: var(--bg); display: flex; gap: 12px; align-items: center; text-align: left; }
+.opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.opt .n { font-size: 12px; color: var(--muted); white-space: nowrap; line-height: 1.3; }
+.alg { font-family: var(--mono); font-size: 14px; font-weight: 500; word-break: break-word; }
+.strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mv { font-family: var(--mono); font-weight: 700; font-size: 15px; padding: 5px 8px; border-radius: 8px; background: var(--soft); border: 0; min-width: 36px; min-height: 34px; }
+.mv.rot { background: #fff; box-shadow: inset 0 0 0 1px var(--muted); }
+.mv.done { color: #9aa0ad; background: transparent; }
+.mv.now { background: var(--accent); color: #fff; box-shadow: none; }
+.grp { display: inline-flex; gap: 3px; padding: 3px; border-radius: 11px; background: var(--accent-soft); }
+.grp .mv { background: #fff; }
+.grp .mv.done { background: transparent; }
+.grp .mv.now { background: var(--accent); }
+.legend { font-size: 12.5px; color: var(--muted); }
+.pad { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.pad button { font-family: var(--mono); font-weight: 700; min-height: 40px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
+.pad button:hover { background: var(--soft); }
+details summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+details summary::-webkit-details-marker { display: none; }
+details summary::after { content: "+"; font-size: 20px; color: var(--muted); font-weight: 400; }
+details[open] summary::after { content: "–"; }
+.toggle { display: flex; gap: 10px; align-items: center; font-size: 14px; min-height: 32px; }
+.toggle input { width: 20px; height: 20px; accent-color: var(--ink); flex: none; }
+input[type="range"] { accent-color: var(--ink); width: 100%; }
+
+@media (min-width: 640px) { 
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 999px; font-weight: 600; z-index: 60; font-size: 14px; max-width: calc(100% - 32px); text-align: center; box-shadow: 0 8px 24px rgba(17,19,24,.2); }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: rot .8s linear infinite; display: inline-block; vertical-align: -3px; }
+@keyframes rot { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .flash, </style>
+
+<header class="top">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><i style="background:var(--c-G)"></i><i style="background:var(--c-R)"></i><i style="background:var(--c-B)"></i><i style="background:var(--c-Y)"></i></span>F2L Pair Coach</div>
+  <button class="btn" id="btn-newscan" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><rect x="8" y="8" width="8" height="8" rx="1.5"/></svg>Scan my cube</button>
+  <button class="btn" id="btn-cancelscan" hidden>Back to cube</button>
+</header>
+
+<main class="main">
+  <div class="stage-wrap">
+    <div class="stage" id="stage">
+      <div class="scanner" id="scanner" hidden>
+        <video id="video" playsinline muted autoplay hidden></video>
+        <canvas id="vf-overlay"></canvas>
+        <div class="vf-empty" id="vf-empty">
+          <div class="vf-cube" aria-hidden="true"><i style="background:var(--c-G)"></i><i style="background:var(--c-R)"></i><i style="background:var(--c-W)"></i><i style="background:var(--c-G)"></i><i style="background:var(--c-Y)"></i><i style="background:var(--c-B)"></i><i style="background:var(--c-O)"></i><i style="background:var(--c-G)"></i><i style="background:var(--c-B)"></i></div>
+          <h2 id="vf-empty-title">Show any side of your cube</h2>
+          <p id="vf-empty-text">Hold it about 20 cm away, straight on, so one face fills most of the picture.</p>
+          <div class="row" id="vf-buttons" style="justify-content:center">
+            <label class="btn on-dark big" id="btn-capture"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span id="btn-capture-label">Capture face</span><input type="file" accept="image/*" capture="environment" id="in-capture" hidden></label>
+          </div>
+        </div>
+        <div class="review" id="review" hidden>
+          <div class="rv-photo-wrap"><canvas id="rv-photo"></canvas></div>
+          <div class="rv-card">
+            <div class="rv-head"><b id="rv-title"></b><span class="small muted" id="rv-step"></span></div>
+            <div class="rv-body">
+              <div class="rv-grid" id="rv-grid"></div>
+              <div class="rv-side">
+                <p class="small" id="rv-hint">Do these match your cube? Tap a square to fix it.</p>
+                <div class="rv-palette" id="rv-palette" hidden></div>
+              </div>
+            </div>
+            <div class="rv-actions">
+              <button class="btn" id="rv-retake">Retake</button>
+              <button class="btn primary" id="rv-ok"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>Correct</button>
+            </div>
+          </div>
+        </div>
+        <div class="vf-msg" id="vf-msg" hidden></div>
+      </div>
+      <div class="cube-ui" id="cube-ui">
+        <div class="hold" id="hold"></div>
+        <div class="stage-tools">
+          <button class="icon-btn" id="btn-view" title="Reset view" aria-label="Reset view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></button>
+        </div>
+        <div class="tap-hint" id="tap-hint">Tap a corner or edge to pick its pair</div>
+        <div class="player" id="player" hidden>
+          <div class="cap"><b id="cap-move">–</b><div class="cap-body"><span id="cap-text"></span><span class="note" id="cap-note"></span></div><span class="count" id="cap-count"></span></div>
+          <div class="ctl">
+            <button class="btn icon" id="btn-restart" title="Back to the start" aria-label="Back to the start"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M5 5h2.5v14H5zM19 5v14L8.5 12z"/></svg></button>
+            <button class="btn icon" id="btn-prev" title="Previous move" aria-label="Previous move"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M16 5v14L5 12z"/></svg></button>
+            <button class="btn primary grow" id="btn-next">Next move <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+            <button class="btn icon" id="btn-play" title="Play all" aria-label="Play all"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" id="ico-play"><path d="M4 5v14l8-7zM12 5v14l8-7z"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <!-- while scanning -->
+    <div class="card" id="scan-panel" hidden>
+      <div class="card-head"><div class="label">Sides confirmed</div><span class="small muted" id="face-count">0 of 5</span></div>
+      <div class="progress" id="faces"></div>
+      <ol class="tips">
+        <li>Capture a side, check its 9 colors, tap <b>Correct</b>.</li>
+        <li>Do the top and the four sides, in any order and any rotation. The bottom is worked out for you.</li>
+        <li>Then hold the cube yellow on top, as shown, and pick a pair.</li>
+      </ol>
+    </div>
+
+    <!-- once the cube is loaded -->
+    <div class="card" id="cross-card" hidden>
+      <div class="label">Cross first</div>
+      <p id="cross-text"></p>
+      <div><button class="btn primary" id="btn-cross">Show the cross moves</button></div>
+    </div>
+    <div class="card" id="pairs-card" hidden>
+      <div class="card-head"><div class="label">F2L pairs</div><span class="small muted" id="pairs-status"></span></div>
+      <div class="pairs" id="pairs"></div>
+    </div>
+    <div class="card" id="flow-card" hidden>
+      <div class="card-head"><h3 id="flow-title" style="font-size:18px;display:flex;gap:6px;align-items:center"></h3><button class="btn ghost small" id="btn-close-flow">Close</button></div>
+      <div class="case" id="flow-case"></div>
+      <div class="label">Solutions</div>
+      <div class="opts" id="opts"></div>
+      <div class="label">Steps</div>
+      <div class="strip" id="strip"></div>
+      <div class="legend">Shaded groups are triggers: turn a side, move the top, turn the side back. Tap any step to jump there.</div>
+    </div>
+    <details class="card" id="sync-card" hidden>
+      <summary>Match a move you made on your cube</summary>
+      <div class="pad" id="pad"></div>
+      <div class="row"><button class="btn small" id="btn-undo">Undo last</button></div>
+    </details>
+    <details class="card" id="settings-card" hidden>
+      <summary>Settings</summary>
+      <label class="toggle"><input type="checkbox" id="opt-rotate" checked> Turn the cube so each slot is front-right</label>
+      <label class="toggle"><input type="checkbox" id="opt-follow" checked> Swing the view to show hidden faces</label>
+      <label class="small" for="opt-speed">Animation speed</label>
+      <input type="range" id="opt-speed" min="150" max="900" step="50" value="450" style="direction:rtl">
+    </details>
+  </div>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/cube.js"></script>
+<script src="js/vision.js"></script>
+<script src="js/app.js"></script>
