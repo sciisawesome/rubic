@@ -1069,6 +1069,17 @@
       return best;
     },
 
+    // How clearly a sample reads as its color: the gap to the runner-up color.
+    margin(rgb) {
+      const lab = Vision.toLab(rgb);
+      const costs = Vision.COLORS.map(c => {
+        const f = this.faces[c];
+        let ref = Vision.toLab(Vision.DEFAULT_RGB[c]);
+        if (f) ref = c === 'W' ? f.labs[4].map((v, k) => (v + ref[k]) / 2) : f.labs[4];
+        return { c, d: Vision.colorCost(lab, ref, c === 'W') };
+      }).sort((a, b) => a.d - b.d);
+      return { label: costs[0].c, gap: costs[1].d - costs[0].d };
+    },
     // Read a new side together with the sides already captured: every color matched to the
     // centers seen so far, at most 9 of each. Squares the user set by hand stay as set.
     readFace(samples) {
@@ -1104,6 +1115,7 @@
       v.srcObject = this.stream; v.hidden = false;
       await v.play().catch(() => {});
       $('#vf-empty').hidden = true;
+      $('#btn-shutter').hidden = false;
       this.stable = null;
       this.prompt();
       clearInterval(this.timer);
@@ -1118,6 +1130,7 @@
       clearInterval(this.timer);
       if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
       this.live = false;
+      $('#btn-shutter').hidden = true;
       const v = $('#video'); v.hidden = true; v.srcObject = null;
       $('#vf-msg').hidden = true;
       const o = $('#vf-overlay'); o.getContext('2d').clearRect(0, 0, o.width, o.height);
@@ -1132,60 +1145,73 @@
       const dw = o.clientWidth, dh = o.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
       if (o.width !== Math.round(dw * dpr) || o.height !== Math.round(dh * dpr)) { o.width = Math.round(dw * dpr); o.height = Math.round(dh * dpr); }
       const g = this.guide(dw, dh);
-      // look a little beyond the guide square so the face doesn't need perfect aiming
-      const rs = Math.min(g.s * 1.3, dw, dh), rx = Math.max(0, Math.min(dw - rs, g.x + g.s / 2 - rs / 2)), ry = Math.max(0, Math.min(dh - rs, g.y + g.s / 2 - rs / 2));
+      // search the whole camera view: the square is only a hint, so a cube held closer,
+      // further away or off to one side is still found
       const sc = Math.max(dw / v.videoWidth, dh / v.videoHeight);
       const ox = (dw - v.videoWidth * sc) / 2, oy = (dh - v.videoHeight * sc) / 2;
-      const N = 360, W = this.work;
-      W.width = W.height = N;
-      W.getContext('2d', { willReadFrequently: true }).drawImage(v, (rx - ox) / sc, (ry - oy) / sc, rs / sc, rs / sc, 0, 0, N, N);
+      const N = 320, M = Math.round(N * dh / dw), W = this.work;
+      if (W.width !== N || W.height !== M) { W.width = N; W.height = M; }
+      W.getContext('2d', { willReadFrequently: true }).drawImage(v, -ox / sc, -oy / sc, dw / sc, dh / sc, 0, 0, N, M);
       const det = Vision.detectFace(W);
-      const toScreen = ([x, y]) => [rx + x / N * rs, ry + y / N * rs];
-      if (!det || det.score < 11) {
-        this.stable = null;
-        this.drawOverlay(o, dpr, g, null, null, 0);
-        this.setMsg(this.nextText());
+      const toScreen = ([x, y]) => [x / N * dw, y / M * dh];
+      // A missed or poor frame costs a little progress instead of all of it: hands shake,
+      // focus breathes and the odd frame blurs, and none of that should mean starting over.
+      const lose = () => { if (this.stable) { this.stable.n = Math.max(0, this.stable.n - 1); if (!this.stable.n) this.stable = null; } };
+      if (!det || det.score < 10) {
+        lose();
+        this.drawOverlay(o, dpr, g, null, null, this.stable ? Math.min(1, this.stable.n / this.need) : 0);
+        this.setMsg(this.stable ? 'Hold still…' : Vision.light < 90 ? 'Too dark · move to brighter light' : this.nextText());
         return;
       }
-      // only a side that faces the camera squarely gives a clean read
       const q = det.quad, len = (a, b) => Math.hypot(q[b][0] - q[a][0], q[b][1] - q[a][1]);
       const sides = [len(0, 1), len(1, 2), len(2, 3), len(3, 0)];
       const ux = q[1][0] - q[0][0], uy = q[1][1] - q[0][1], vx = q[3][0] - q[0][0], vy = q[3][1] - q[0][1];
-      const square = Math.min(...sides) / Math.max(...sides) > 0.72 && Math.abs(ux * vx + uy * vy) / (sides[0] * sides[3]) < 0.3;
+      // roughly square-on is enough; the colors come from the median of the good frames
+      const square = Math.min(...sides) / Math.max(...sides) > 0.62 && Math.abs(ux * vx + uy * vy) / (sides[0] * sides[3]) < 0.38;
       const stats = {};
-      const samples = Vision.sampleFace(W, det.quad, stats);
+      const samples = Vision.brighten(Vision.sampleFace(W, det.quad, stats));
       const labels = samples.map(x => this.read(x));
       const side = sides[0];
       const mid = qq => [(qq[0][0] + qq[2][0]) / 2, (qq[0][1] + qq[2][1]) / 2];
-      const moved = this.stable ? Math.hypot(mid(q)[0] - mid(this.stable.quad)[0], mid(q)[1] - mid(this.stable.quad)[1]) : Infinity;
-      // steady = the face stays put and mostly reads the same (a square or two may flicker;
-      // the median over the steady frames settles them)
-      const agree = this.stable ? labels.filter((l, i) => l === this.stable.labels[i]).length : 0;
-      const steady = square && det.score >= 13;
-      if (steady && this.stable && moved < side * 0.1 && agree >= 6) { this.stable.n++; this.stable.frames.push(samples); }
-      else this.stable = steady ? { n: 1, frames: [samples] } : null;
-      if (this.stable) this.stable.labels = labels;
-      if (this.stable) this.stable.quad = det.quad;
-      const need = 7, progress = this.stable ? Math.min(1, this.stable.n / need) : 0;
-      this.drawOverlay(o, dpr, g, det.quad.map(toScreen), labels, progress);
-      if (!square) { this.setMsg('Turn the side so it faces the camera straight on'); return; }
-      if (stats.clipped > 0.35) { this.stable = null; this.setMsg('Too bright \u00b7 tilt the cube away from the light'); return; }
+      const st = this.stable;
+      const moved = st ? Math.hypot(mid(q)[0] - mid(st.quad)[0], mid(q)[1] - mid(st.quad)[1]) : 0;
       const have = this.faces[labels[4]];
-      const sameAs = f => [0, 1, 2, 3].some(k => { let g = f.labels; for (let t = 0; t < k; t++) g = [6, 3, 0, 7, 4, 1, 8, 5, 2].map(i => g[i]); return g.filter((x, i) => x === labels[i]).length >= 6; });
-      if (have && sameAs(have)) {
-        this.setMsg(`Already have the ${NAME[labels[4]]} side \u00b7 turn to a new one`);
-        this.stable = null;
-        return;
+      const sameAs = f => [0, 1, 2, 3].some(k => { let gg = f.labels; for (let t = 0; t < k; t++) gg = [6, 3, 0, 7, 4, 1, 8, 5, 2].map(i => gg[i]); return gg.filter((x, i) => x === labels[i]).length >= 6; });
+      let msg = 'Hold still…';
+      if (!square) { lose(); msg = 'Turn the side so it faces the camera straight on'; }
+      else if (stats.clipped > 0.35) { lose(); msg = 'Too bright · tilt the cube away from the light'; }
+      else if (have && sameAs(have)) { this.stable = null; msg = `Already have the ${NAME[labels[4]]} side · turn to a new one`; }
+      else {
+        // a different face (most squares changed) starts a fresh hold; small wobbles don't
+        const agree = st ? labels.filter((l, i) => l === st.labels[i]).length : 9;
+        if (!st || agree < 5) this.stable = { n: 0, frames: [] };
+        const s2 = this.stable;
+        if (moved < side * 0.3) {
+          s2.n++;
+          s2.frames.push(samples); if (s2.frames.length > 10) s2.frames.shift();
+          // keep the picture of the latest good frame for the check card
+          s2.snap = s2.snap || document.createElement('canvas'); s2.snap.width = N; s2.snap.height = M;
+          s2.snap.getContext('2d').drawImage(W, 0, 0);
+          s2.snapQuad = det.quad;
+        }
+        s2.labels = labels; s2.quad = det.quad;
       }
-      if (progress < 1) { this.setMsg('Hold still\u2026'); return; }
-      // read each square from the median of the steady frames
-      const frames = this.stable.frames;
-      const med = samples.map((_, i) => [0, 1, 2].map(k => { const v = frames.map(f => f[i][k]).sort((a, b) => a - b); return v[v.length >> 1]; }));
-      const snap = document.createElement('canvas');
-      snap.width = snap.height = N;
-      snap.getContext('2d').drawImage(W, 0, 0);
+      if (this.stable && !this.stable.quad) this.stable.quad = det.quad;
+      const progress = this.stable ? Math.min(1, this.stable.n / this.need) : 0;
+      this.drawOverlay(o, dpr, g, det.quad.map(toScreen), labels, progress);
+      this.setMsg(msg);
+      if (progress >= 1) this.shoot();
+    },
+    need: 5,
+    // Capture now: from the good frames gathered so far (auto, or the shutter button).
+    shoot() {
+      const s2 = this.stable;
+      if (!s2 || !s2.frames.length || !s2.snap) { toast('Hold a side inside the square first'); return; }
+      const frames = s2.frames;
+      const med = frames[0].map((_, i) => [0, 1, 2].map(k => { const v = frames.map(f => f[i][k]).sort((a, b) => a - b); return v[v.length >> 1]; }));
+      const snap = s2.snap, quad = s2.snapQuad;
       this.stable = null;
-      this.openReview(snap, det.quad, med, this.readFace(med), null);
+      this.openReview(snap, quad, med, this.readFace(med), null);
     },
     drawOverlay(o, dpr, g, quad, labels, progress) {
       const x = o.getContext('2d');
@@ -1221,7 +1247,7 @@
         const cv = await Vision.loadImage(file, 1000);
         const det = Vision.detectFace(cv);
         const quad = det ? det.quad : Vision.autoQuad(cv);
-        const samples = Vision.sampleFace(cv, quad);
+        const samples = Vision.brighten(Vision.sampleFace(cv, quad));
         this.openReview(cv, quad, samples, this.readFace(samples), null);
         if (!det) { this.review.note = 'The grid may be off. Check every square, or retake closer and straight on.'; this.renderReview(); }
       } catch (e) { toast(e.message); }
@@ -1234,9 +1260,26 @@
       this.showReview(true);
       $('#rv-hint').textContent = 'Do these match your cube? Tap a square to fix it.';
       this.renderReview();
+      if (!editing && this.isConfident(samples, labels)) this.startAuto();
+    },
+    AUTO_GAP: 16,
+    isConfident(samples, labels) {
+      if (this.faces[labels[4]]) return false;            // would replace a side: let the user look
+      if ($('#rv-hint').classList.contains('warn-text')) return false;   // a color would pass 9
+      return samples.every((x, i) => { const m = this.margin(x); return m.label === labels[i] && m.gap > this.AUTO_GAP; });
+    },
+    startAuto() {
+      const ok = $('#rv-ok');
+      ok.classList.add('auto');
+      this.review.auto = setTimeout(() => { if (this.review) this.confirm(); }, 1600);
+    },
+    stopAuto() {
+      if (this.review && this.review.auto) { clearTimeout(this.review.auto); this.review.auto = null; }
+      $('#rv-ok').classList.remove('auto');
     },
     showReview(on) {
       $('#review').hidden = !on;
+      $('#btn-shutter').hidden = on || !this.live;
       if (on) $('#vf-msg').hidden = true;
       $('#vf-empty').hidden = on || this.live;
     },
@@ -1254,7 +1297,7 @@
         b.className = i === 4 ? 'center' : '';
         b.setAttribute('aria-pressed', String(r.sel === i));
         b.setAttribute('aria-label', `Row ${Math.floor(i / 3) + 1}, column ${(i % 3) + 1}: ${NAME[l]}. Tap to change.`);
-        b.addEventListener('click', () => { r.sel = r.sel === i ? -1 : i; this.renderReview(); });
+        b.addEventListener('click', () => { this.stopAuto(); r.sel = r.sel === i ? -1 : i; this.renderReview(); });
         grid.appendChild(b);
       });
       const pal = $('#rv-palette');
@@ -1316,6 +1359,7 @@
     tapPhoto(e) {
       const r = this.review;
       if (!r || !this.photoMap) return;
+      this.stopAuto();
       const rect = $('#rv-photo').getBoundingClientRect();
       const px = (e.clientX - rect.left - this.photoMap.ox) / this.photoMap.sc, py = (e.clientY - rect.top - this.photoMap.oy) / this.photoMap.sc;
       let best = -1, bd = Infinity;
@@ -1330,6 +1374,7 @@
     confirm() {
       const r = this.review;
       if (!r) return;
+      this.stopAuto();
       if (r.editing && r.editing !== r.labels[4]) delete this.faces[r.editing];
       const c = r.labels[4];
       this.faces[c] = { labels: r.labels.slice(), samples: r.samples, labs: r.samples.map(Vision.toLab), cv: r.cv, quad: r.quad, edited: Array.from(r.edited) };
@@ -1346,6 +1391,7 @@
       if (this.blocked && !this.problem) $('#in-capture').click();
     },
     retake() {
+      this.stopAuto();
       const r = this.review;
       this.review = null;
       if (r && r.editing) { delete this.faces[r.editing]; this.renderFaces(); }
@@ -1492,6 +1538,7 @@
     $('#final-go').addEventListener('click', () => { Final.close(); Scan.stopCamera(); loadCube(canonical(Final.state)); toast('Got it. Hold your cube as shown.'); });
     $('#btn-restart-scan').addEventListener('click', () => { Scan.enter(); toast('Starting over'); });
     $('#rv-retake').addEventListener('click', () => Scan.retake());
+    $('#btn-shutter').addEventListener('click', () => Scan.shoot());
     $('#rv-photo').addEventListener('click', e => Scan.tapPhoto(e));
     new ResizeObserver(() => { if (Scan.review) Scan.drawReviewPhoto(); }).observe($('#rv-photo'));
     $('#btn-cross').addEventListener('click', () => startCross());

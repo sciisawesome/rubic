@@ -135,11 +135,19 @@
     return applyH(h, u, v);
   }
 
+  // brightness of the last picture looked at (95th percentile, 0..255), for "too dark" hints
+  let lastLight = 255, lastGain = 1;
+  // Brighten color samples the same way the last picture was brightened for finding the cube,
+  // so readings don't depend on how bright the room is.
+  function brighten(samples, gain) {
+    const k = gain == null ? lastGain : gain;
+    return samples.map(c => c.map(v => Math.min(255, v * k)));
+  }
   // Find one cube face anywhere in an image: segment sticker-coloured regions, then fit
   // a 3x3 lattice to them (perspective-corrected). Prefers the face that looks most
   // square-on, biggest and most central. Returns {quad, score} in image pixels, or null.
   function detectFace(src, dbg) {
-    const S = 220;
+    const S = 260;
     const k = S / Math.max(src.width, src.height);
     const W = Math.max(16, Math.round(src.width * k)), H = Math.max(16, Math.round(src.height * k));
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -147,10 +155,18 @@
     cx.drawImage(src, 0, 0, W, H);
     const d = cx.getImageData(0, 0, W, H).data;
     const N = W * H;
+    // 0) dim pictures are brightened first (white reads as gray and blue as near-black in poor
+    //    light): scale so the bright end of the picture lands near full brightness
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < N; i++) hist[Math.max(d[i * 4], d[i * 4 + 1], d[i * 4 + 2])]++;
+    let acc = 0, p95 = 255;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= N * 0.95) { p95 = v; break; } }
+    const gain = Math.min(2.6, Math.max(1, 235 / Math.max(1, p95)));
+    lastLight = p95; lastGain = gain;
     // 1) every pixel gets a coarse cube-colour class by hue (or white), or none
     const cls = new Uint8Array(N).fill(255), mask = new Uint8Array(N);
     for (let i = 0; i < N; i++) {
-      const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+      const r = Math.min(255, d[i * 4] * gain), g = Math.min(255, d[i * 4 + 1] * gain), b = Math.min(255, d[i * 4 + 2] * gain);
       const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
       const s = mx ? (mx - mn) / mx : 0, v = mx / 255;
       if (v > 0.5 && s < 0.2) { cls[i] = 0; continue; }
@@ -223,7 +239,7 @@
       }
       const lu = Math.hypot(u[0], u[1]), lv = Math.hypot(v[0], v[1]);
       const cos = Math.abs(u[0] * v[0] + u[1] * v[1]) / (lu * lv);
-      s += 1.0 * Math.min(lu, lv) / Math.max(lu, lv) + 1.0 * (1 - cos);        // square-on
+      s += 1.0 * Math.min(lu, lv) / Math.max(lu, lv) + 3.0 * (1 - cos);        // square-on
       s += 0.8 * Math.min(1, Math.sqrt(lu * lv) * 4 / Math.min(W, H));         // bigger
       s += 0.8 * (1 - Math.hypot(c[0] - W / 2, c[1] - H / 2) / (diag / 2));   // central
       return s;
@@ -248,7 +264,9 @@
         const u = [b1.x - a.x, b1.y - a.y], v = [b2.x - a.x, b2.y - a.y];
         if (u[0] * v[1] - u[1] * v[0] <= 0) continue;   // keep the grid un-mirrored
         const lu = Math.hypot(u[0], u[1]), lv = Math.hypot(v[0], v[1]);
-        if (Math.abs(u[0] * v[0] + u[1] * v[1]) / (lu * lv) > 0.6 || Math.min(lu, lv) / Math.max(lu, lv) < 0.45) continue;
+        // a face seen roughly square-on has near-perpendicular, similar steps; a slanted grid
+        // (one step running to a diagonal neighbour) can still land on stickers, so rule it out
+        if (Math.abs(u[0] * v[0] + u[1] * v[1]) / (lu * lv) > 0.4 || Math.min(lu, lv) / Math.max(lu, lv) < 0.55) continue;
         for (let oj = -1; oj <= 1; oj++) for (let oi = -1; oi <= 1; oi++) {
           const c = [a.x - oi * u[0] - oj * v[0], a.y - oi * u[1] - oj * v[1]];
           const sc = score(c, u, v);
@@ -424,5 +442,8 @@
   }
   function labDist(a, b) { return dist(rgb2lab(a), rgb2lab(b)); }
 
-  root.Vision = { loadImage, autoQuad, detectFace, quadPoint, sampleFace, classify, nearest: nearestColor, labDist, toLab: rgb2lab, labDistLab: dist, colorCost, COLORS, DEFAULT_RGB };
+  root.Vision = {
+    get light() { return lastLight; },
+    get gain() { return lastGain; },
+    brighten, loadImage, autoQuad, detectFace, quadPoint, sampleFace, classify, nearest: nearestColor, labDist, toLab: rgb2lab, labDistLab: dist, colorCost, COLORS, DEFAULT_RGB };
 })(typeof self !== 'undefined' ? self : this);
